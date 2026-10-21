@@ -1,7 +1,13 @@
 /* eslint-disable no-console */
 import bcryptjs from "bcryptjs";
 import { envVars } from "../config/env";
-import { IAuthProvider, IUser, Role } from "../modules/user/user.interface";
+import {
+  AccountStatus,
+  IAuthProvider,
+  IUser,
+  Role,
+  RiderStatus,
+} from "../modules/user/user.interface";
 import { User } from "../modules/user/user.model";
 
 export const seedSuperAdmin = async () => {
@@ -30,6 +36,8 @@ export const seedSuperAdmin = async () => {
       password: hashedPassword,
       role: Role.SUPER_ADMIN,
       isBlocked: false,
+      status: AccountStatus.ACTIVE,
+      riderStatus: RiderStatus.IDLE,
       auths: [authProvider],
     };
 

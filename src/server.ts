@@ -1,8 +1,9 @@
 /* eslint-disable no-console */
 import { Server } from "http";
 import mongoose from "mongoose";
-import app from "./app";
 import { envVars } from "./app/config/env";
+import app from "./app";
+import { connectRedis } from "./app/config/redis.config";
 import { seedSuperAdmin } from "./app/utils/seedSuperAdmin";
 
 let server: Server;
@@ -22,56 +23,69 @@ const startServer = async () => {
 };
 
 (async () => {
+  await connectRedis();
   await startServer();
   await seedSuperAdmin();
 })();
 
 process.on("SIGTERM", () => {
   console.log("SIGTERM Signal Received. Server Shutting Down...");
-
   if (server) {
     server.close(() => {
-      process.exit(1);
+      console.log("HTTP Server closed. Disconnecting from database...");
+      mongoose.disconnect().then(() => {
+        console.log("Mongoose disconnected. Proceeding to exit gracefully.");
+        process.exit(0);
+      });
     });
+  } else {
+    process.exit(0);
   }
-  process.exit(1);
 });
 
 process.on("SIGINT", () => {
   console.log("SIGINT Signal Received. Server Shutting Down...");
-
   if (server) {
     server.close(() => {
-      process.exit(1);
+      console.log("HTTP Server closed. Disconnecting from database...");
+      mongoose.disconnect().then(() => {
+        console.log("Mongoose disconnected. Proceeding to exit gracefully.");
+        process.exit(0);
+      });
     });
+  } else {
+    process.exit(0);
   }
-  process.exit(1);
 });
 
 process.on("unhandledRejection", (err) => {
   console.log("Unhandled Rejection Detected. Server Shutting Down...", err);
-
   if (server) {
     server.close(() => {
-      process.exit(1);
+      mongoose.disconnect().then(() => {
+        process.exit(1);
+      });
     });
+  } else {
+    process.exit(1);
   }
-  process.exit(1);
 });
 
 process.on("uncaughtException", (err) => {
   console.log("Uncaught Exception Detected. Server shutting down...", err);
-
   if (server) {
     server.close(() => {
-      process.exit(1);
+      mongoose.disconnect().then(() => {
+        process.exit(1);
+      });
     });
+  } else {
+    process.exit(1);
   }
-  process.exit(1);
 });
 
-// Unhandler rejection error
+// Unhandled rejection error
 // Promise.reject(new Error("I forgot to catch this promise"))
 
 // Uncaught Exception Error
-// throw new Error("I forgot to handle this local erro")
+// throw new Error("I forgot to handle this local error")

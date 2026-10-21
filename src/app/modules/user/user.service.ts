@@ -1,10 +1,17 @@
 import bcryptjs from "bcryptjs";
 import httpStatus from "http-status-codes";
+import { JwtPayload } from "jsonwebtoken";
 import { envVars } from "../../config/env";
 import AppError from "../../errorHelpers/AppError";
-import { IAuthProvider, IUser, Role } from "./user.interface";
+import {
+  AccountStatus,
+  IAuthProvider,
+  IUser,
+  RiderStatus,
+  Role,
+} from "./user.interface";
 import { User } from "./user.model";
-import { JwtPayload } from "jsonwebtoken";
+import { QueryBuilder } from "../../utils/QueryBuilder";
 
 const createUser = async (payload: Partial<IUser>) => {
   const { email, password, ...rest } = payload;
@@ -29,6 +36,7 @@ const createUser = async (payload: Partial<IUser>) => {
     email,
     password: hashedPassword,
     auths: [authProvider],
+    riderStatus: RiderStatus.IDLE,
     ...rest,
   });
 
@@ -40,33 +48,78 @@ const updateUser = async (
   payload: Partial<IUser>,
   decodedToken: JwtPayload
 ) => {
+  if (id !== decodedToken.userId) {
+    throw new AppError(httpStatus.UNAUTHORIZED, "You are not authorized");
+  }
+
   const ifUserExist = await User.findById(id);
 
   if (!ifUserExist) {
     throw new AppError(httpStatus.NOT_FOUND, "User Not Found");
   }
-  if (decodedToken.role === Role.RIDER || decodedToken.role === Role.DRIVER) {
-    if (id !== decodedToken.id) {
-      throw new AppError(httpStatus.FORBIDDEN, "You are not authorized");
+
+  const requesterRole = (decodedToken.role || ifUserExist.role) as
+    | Role
+    | undefined;
+
+  const isPrivilegedUser =
+    requesterRole === Role.ADMIN || requesterRole === Role.SUPER_ADMIN;
+
+  const requestedRole = payload.role as Role | undefined;
+  const isRoleSelectionPayload = typeof requestedRole !== "undefined";
+
+  if (isRoleSelectionPayload && !isPrivilegedUser) {
+    const isValidFirstTimeRoleSelection =
+      !requesterRole &&
+      !ifUserExist.role &&
+      (requestedRole === Role.RIDER || requestedRole === Role.DRIVER);
+
+    if (!isValidFirstTimeRoleSelection) {
+      throw new AppError(
+        httpStatus.FORBIDDEN,
+        "You are not authorized to update role"
+      );
     }
-  }
-  if (
-    decodedToken.role === Role.ADMIN &&
-    ifUserExist.role === Role.SUPER_ADMIN
-  ) {
-    throw new AppError(401, "You are not authorized");
+
+    const payloadKeys = Object.keys(payload);
+    const hasInvalidFieldsForRoleSetup = payloadKeys.some(
+      (key) => key !== "role"
+    );
+
+    if (hasInvalidFieldsForRoleSetup) {
+      throw new AppError(
+        httpStatus.BAD_REQUEST,
+        "Role setup request can only contain the role field"
+      );
+    }
   }
 
-  if (payload.role) {
-    if (decodedToken.role === Role.RIDER || decodedToken.role === Role.DRIVER) {
-      throw new AppError(httpStatus.FORBIDDEN, "You are not authorized");
-    }
+  if ("isBlocked" in payload && !isPrivilegedUser) {
+    throw new AppError(
+      httpStatus.FORBIDDEN,
+      "You are not authorized to edit block status"
+    );
   }
 
-  if (payload.isBlocked) {
-    if (decodedToken.role === Role.RIDER || decodedToken.role === Role.DRIVER) {
-      throw new AppError(httpStatus.FORBIDDEN, "You are not authorized");
-    }
+  if ("status" in payload && !isPrivilegedUser) {
+    throw new AppError(
+      httpStatus.FORBIDDEN,
+      "You are not authorized to edit account status"
+    );
+  }
+
+  if ("isVerified" in payload && !isPrivilegedUser) {
+    throw new AppError(
+      httpStatus.FORBIDDEN,
+      "You are not authorized to edit verification status"
+    );
+  }
+
+  if ("auths" in payload && !isPrivilegedUser) {
+    throw new AppError(
+      httpStatus.FORBIDDEN,
+      "You are not authorized to edit auth providers"
+    );
   }
 
   if (payload.password) {
@@ -77,21 +130,32 @@ const updateUser = async (
   }
 
   const newUpdatedUser = await User.findByIdAndUpdate(id, payload, {
-    new: true,
+    returnDocument: "after",
     runValidators: true,
   });
 
   return newUpdatedUser;
 };
 
-const getAllUsers = async () => {
-  const users = await User.find({});
-  const totalUsers = await User.countDocuments();
+const userSearchableFields = ["name", "email", "contactNo"];
+
+const getAllUsers = async (query: Record<string, string> = {}) => {
+  const queryBuilder = new QueryBuilder(
+    User.find({}).select("-password"),
+    query,
+  );
+
+  const users = queryBuilder
+    .filter()
+    .search(userSearchableFields)
+    .sort()
+    .paginate();
+
+  const [data, meta] = await Promise.all([users.build(), queryBuilder.getMeta()]);
+
   return {
-    data: users,
-    meta: {
-      total: totalUsers,
-    },
+    data,
+    meta,
   };
 };
 
@@ -112,9 +176,9 @@ const getMe = async (id: string) => {
 export const blockUser = async (id: string) => {
   const user = await User.findByIdAndUpdate(
     id,
-    { isBlocked: true },
-    { new: true }
-  );
+    { isBlocked: true, status: AccountStatus.BLOCKED },
+    { returnDocument: "after" }
+  ).select("-password");
   if (!user) {
     throw new AppError(httpStatus.NOT_FOUND, "User Not Found");
   }
@@ -124,9 +188,9 @@ export const blockUser = async (id: string) => {
 export const unblockUser = async (id: string) => {
   const user = await User.findByIdAndUpdate(
     id,
-    { isBlocked: false },
-    { new: true }
-  );
+    { isBlocked: false, status: AccountStatus.ACTIVE },
+    { returnDocument: "after" }
+  ).select("-password");
   if (!user) {
     throw new AppError(httpStatus.NOT_FOUND, "User Not Found");
   }

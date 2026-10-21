@@ -43,12 +43,6 @@ export const createNewAccessTokenWithRefreshToken = async (
   if (!isUserExist) {
     throw new AppError(httpStatus.BAD_REQUEST, "User does not exist");
   }
-  if (isUserExist.isBlocked) {
-    throw new AppError(
-      httpStatus.BAD_REQUEST,
-      `User is ${isUserExist.isBlocked}`
-    );
-  }
   const jwtPayload = {
     userId: isUserExist._id,
     email: isUserExist.email,

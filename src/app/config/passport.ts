@@ -7,7 +7,7 @@ import {
   VerifyCallback,
 } from "passport-google-oauth20";
 import { Strategy as LocalStrategy } from "passport-local";
-import { Role } from "../modules/user/user.interface";
+import { AccountStatus } from "../modules/user/user.interface";
 import { User } from "../modules/user/user.model";
 import { envVars } from "./env";
 
@@ -23,6 +23,19 @@ passport.use(
 
         if (!isUserExist) {
           return done("User does not exist");
+        }
+
+        if (!isUserExist?.isVerified) {
+          return done("User is not verified");
+        }
+        if (
+          isUserExist.isBlocked ||
+          isUserExist.status === AccountStatus.BLOCKED
+        ) {
+          return done("User is blocked");
+        }
+        if (isUserExist.status === AccountStatus.SUSPENDED) {
+          return done("User is suspended");
         }
 
         const isGoogleAuthenticated = isUserExist.auths.some(
@@ -74,13 +87,24 @@ passport.use(
 
         let user = await User.findOne({ email });
 
+        if (
+          user &&
+          (user.isBlocked || user.status === AccountStatus.BLOCKED)
+        ) {
+          return done(null, false, { message: "User is blocked" });
+        }
+
+        if (user && user.status === AccountStatus.SUSPENDED) {
+          return done(null, false, { message: "User is suspended" });
+        }
+
         if (!user) {
           user = await User.create({
             email,
             name: profile.displayName,
-            picture: profile.photos?.[0].value,
-            role: Role.RIDER,
+            isVerified: true,
             isBlocked: false,
+            status: AccountStatus.ACTIVE,
             auths: [
               {
                 provider: "google",
@@ -88,6 +112,39 @@ passport.use(
               },
             ],
           });
+        } else {
+          const hasGoogleProvider = user.auths.some(
+            (providerObjects) => providerObjects.provider === "google"
+          );
+
+          let shouldSave = false;
+
+          if (!hasGoogleProvider) {
+            user.auths.push({
+              provider: "google",
+              providerId: profile.id,
+            });
+            shouldSave = true;
+          }
+
+          if (!user.isVerified) {
+            user.isVerified = true;
+            shouldSave = true;
+          }
+
+          if (!user.name && profile.displayName) {
+            user.name = profile.displayName;
+            shouldSave = true;
+          }
+
+          if (!user.status) {
+            user.status = AccountStatus.ACTIVE;
+            shouldSave = true;
+          }
+
+          if (shouldSave) {
+            await user.save();
+          }
         }
         return done(null, user);
       } catch (error) {
@@ -96,12 +153,6 @@ passport.use(
     }
   )
 );
-
-// frontend localhost:5173/login?redirect=/ride -> localhost:5000/api/v1/auth/google?redirect=/booking -> passport -> Google OAuth Consent -> gmail login -> successful -> callback url localhost:5000/api/v1/auth/google/callback -> db store -> token
-
-// Bridge == Google -> user db store -> token
-//Custom -> email , password, role : USER, name... -> registration -> DB -> 1 User create
-//Google -> req -> google -> successful : Jwt Token : Role , email -> DB - Store -> token - api access
 
 passport.serializeUser((user: any, done: (err: any, id?: unknown) => void) => {
   done(null, user._id);
@@ -115,3 +166,4 @@ passport.deserializeUser(async (id: string, done: any) => {
     done(error);
   }
 });
+

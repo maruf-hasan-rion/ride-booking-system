@@ -12,11 +12,11 @@ router.post(
   validateRequest(createUserZodSchema),
   UserControllers.registerUser
 );
-router.get("/me", checkAuth(...Object.values(Role)), UserControllers.getMe);
+router.get("/me", checkAuth(), UserControllers.getMe);
 router.patch(
   "/:id",
   validateRequest(updateUserZodSchema),
-  checkAuth(...Object.values(Role)),
+  checkAuth(),
   UserControllers.updateUser
 );
 

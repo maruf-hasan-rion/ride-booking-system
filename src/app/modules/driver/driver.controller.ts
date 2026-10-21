@@ -17,12 +17,43 @@ const createProfile = catchAsync(async (req: Request, res: Response) => {
   sendResponse(res, {
     success: true,
     statusCode: httpStatus.CREATED,
-    message: "User Created Successfully",
+    message: "Driver Profile Created Successfully",
     data: profile,
   });
 });
 
-const changeDriverStatus = async (req: Request, res: Response) => {
+const updateProfile = catchAsync(async (req: Request, res: Response) => {
+  const decodeToken = req.user as JwtPayload;
+  const driverId = decodeToken.userId;
+
+  const profile = await DriverServices.updateDriverProfile(
+    driverId,
+    req.body.vehicleInfo
+  );
+
+  sendResponse(res, {
+    success: true,
+    statusCode: httpStatus.OK,
+    message: "Driver Profile Updated Successfully",
+    data: profile,
+  });
+});
+
+const myProfile = catchAsync(async (req: Request, res: Response) => {
+  const decodeToken = req.user as JwtPayload;
+  const driverId = decodeToken.userId;
+
+  const profile = await DriverServices.getMyProfile(driverId);
+
+  sendResponse(res, {
+    success: true,
+    statusCode: httpStatus.OK,
+    message: "Driver Profile Retrieved",
+    data: profile,
+  });
+});
+
+const changeDriverStatus = catchAsync(async (req: Request, res: Response) => {
   const decodeToken = req.user as JwtPayload;
   const driverId = decodeToken.userId;
 
@@ -37,7 +68,39 @@ const changeDriverStatus = async (req: Request, res: Response) => {
     message: "Driver Status Changed",
     data: profile,
   });
-};
+});
+
+const getIncomingRequests = catchAsync(async (req: Request, res: Response) => {
+  const decodeToken = req.user as JwtPayload;
+  const driverId = decodeToken.userId;
+
+  const rides = await DriverServices.getIncomingRequests(
+    driverId,
+    req.query as Record<string, string>
+  );
+
+  sendResponse(res, {
+    success: true,
+    statusCode: httpStatus.OK,
+    message: "Incoming ride requests retrieved",
+    data: rides,
+  });
+});
+
+const getActiveRide = catchAsync(async (req: Request, res: Response) => {
+  const decodeToken = req.user as JwtPayload;
+  const driverId = decodeToken.userId;
+
+  const ride = await DriverServices.getActiveRide(driverId);
+
+  sendResponse(res, {
+    success: true,
+    statusCode: httpStatus.OK,
+    message: "Active ride retrieved",
+    data: ride,
+  });
+});
+
 const acceptRideRequest = catchAsync(async (req: Request, res: Response) => {
   const decodeToken = req.user as JwtPayload;
   const driverId = decodeToken.userId;
@@ -63,7 +126,7 @@ const rejectRideRequest = catchAsync(async (req: Request, res: Response) => {
   sendResponse(res, {
     success: true,
     statusCode: httpStatus.OK,
-    message: "Ride Request Accepted",
+    message: "Ride Request Rejected",
     data: ride,
   });
 });
@@ -71,18 +134,20 @@ const rejectRideRequest = catchAsync(async (req: Request, res: Response) => {
 const updateRideStatus = catchAsync(async (req: Request, res: Response) => {
   const rideId = req.params.id;
   const { status } = req.body;
+  const decodeToken = req.user as JwtPayload;
+  const driverId = decodeToken.userId;
 
-  const ride = await DriverServices.updateRideStatus(rideId, status);
+  const ride = await DriverServices.updateRideStatus(rideId, driverId, status);
 
   sendResponse(res, {
     success: true,
     statusCode: httpStatus.OK,
-    message: "Driver Status Changed",
+    message: "Ride Status Updated",
     data: ride,
   });
 });
 
-const myEarnings = async (req: Request, res: Response) => {
+const myEarnings = catchAsync(async (req: Request, res: Response) => {
   const decodeToken = req.user as JwtPayload;
   const driverId = decodeToken.userId;
   const rides = await DriverServices.driverEarnings(driverId);
@@ -93,9 +158,9 @@ const myEarnings = async (req: Request, res: Response) => {
     message: `My Earning History`,
     data: rides,
   });
-};
+});
 
-const allDrivers = async (req: Request, res: Response) => {
+const allDrivers = catchAsync(async (req: Request, res: Response) => {
   const drivers = await DriverServices.allDrivers();
 
   sendResponse(res, {
@@ -104,7 +169,7 @@ const allDrivers = async (req: Request, res: Response) => {
     message: "All Drivers Retrieved Successfully",
     data: drivers,
   });
-};
+});
 
 const approveDriver = catchAsync(async (req: Request, res: Response) => {
   const profile = await DriverServices.approveDriver(req.params.id);
@@ -117,7 +182,7 @@ const approveDriver = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
-const suspendDriver = async (req: Request, res: Response) => {
+const suspendDriver = catchAsync(async (req: Request, res: Response) => {
   const profile = await DriverServices.suspendDriver(req.params.id);
 
   sendResponse(res, {
@@ -126,10 +191,15 @@ const suspendDriver = async (req: Request, res: Response) => {
     message: "Driver Profile Suspended",
     data: profile,
   });
-};
+});
 
 export const driverController = {
   createProfile,
+  updateProfile,
+  myProfile,
+  changeDriverStatus,
+  getIncomingRequests,
+  getActiveRide,
   acceptRideRequest,
   rejectRideRequest,
   updateRideStatus,
@@ -137,5 +207,4 @@ export const driverController = {
   allDrivers,
   approveDriver,
   suspendDriver,
-  changeDriverStatus,
 };

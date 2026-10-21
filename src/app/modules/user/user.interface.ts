@@ -12,14 +12,37 @@ export interface IAuthProvider {
   providerId: string;
 }
 
+export enum RiderStatus {
+  IDLE = "IDLE",
+  REQUESTED = "REQUESTED",
+  WAITING = "WAITING",
+  PICKED_UP = "PICKED_UP",
+  ON_RIDE = "ON_RIDE",
+}
+
+export enum AccountStatus {
+  ACTIVE = "ACTIVE",
+  BLOCKED = "BLOCKED",
+  SUSPENDED = "SUSPENDED",
+}
+
 export interface IUser {
   _id?: Types.ObjectId;
   name: string;
   email: string;
   password?: string;
+  contactNo?: string;
+  image?: string;
+  location?: {
+    type: "Point";
+    coordinates: [number, number];
+  };
   role?: Role;
+  isVerified?: boolean;
   isBlocked?: boolean;
+  status?: AccountStatus;
   auths: IAuthProvider[];
+  riderStatus: RiderStatus;
   createdAt?: Date;
   updatedAt?: Date;
 }

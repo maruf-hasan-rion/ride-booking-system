@@ -33,7 +33,7 @@ const updateUser = catchAsync(
 
     sendResponse(res, {
       success: true,
-      statusCode: httpStatus.CREATED,
+      statusCode: httpStatus.OK,
       message: "User Updated Successfully",
       data: user,
     });
@@ -41,11 +41,13 @@ const updateUser = catchAsync(
 );
 const getAllUsers = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const users = await UserServices.getAllUsers();
+    const users = await UserServices.getAllUsers(
+      req.query as Record<string, string>,
+    );
 
     sendResponse(res, {
       success: true,
-      statusCode: httpStatus.CREATED,
+      statusCode: httpStatus.OK,
       message: "All Users Retrieved Successfully",
       data: users.data,
       meta: users.meta,
@@ -56,11 +58,11 @@ const getAllUsers = catchAsync(
 const getMe = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const decodedToken = req.user as JwtPayload;
-    const user = await UserServices.getMe(decodedToken.id);
+    const user = await UserServices.getMe(decodedToken.userId);
 
     sendResponse(res, {
       success: true,
-      statusCode: httpStatus.CREATED,
+      statusCode: httpStatus.OK,
       message: "Your profile Retrieved Successfully",
       data: user.data,
     });
@@ -72,7 +74,7 @@ const getSingleUser = catchAsync(
     const user = await UserServices.getSingleUser(id);
     sendResponse(res, {
       success: true,
-      statusCode: httpStatus.CREATED,
+      statusCode: httpStatus.OK,
       message: "User Retrieved Successfully",
       data: user.data,
     });
@@ -85,7 +87,7 @@ const blockUserAccount = catchAsync(
 
     sendResponse(res, {
       success: true,
-      statusCode: httpStatus.CREATED,
+      statusCode: httpStatus.OK,
       message: "User block Successfully",
       data: user,
     });
@@ -97,7 +99,7 @@ const unblockUserAccount = catchAsync(
 
     sendResponse(res, {
       success: true,
-      statusCode: httpStatus.CREATED,
+      statusCode: httpStatus.OK,
       message: "User Unblock Successfully",
       data: user,
     });
