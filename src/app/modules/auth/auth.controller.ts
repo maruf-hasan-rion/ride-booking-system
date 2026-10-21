@@ -8,7 +8,7 @@ import { envVars } from "../../config/env";
 import AppError from "../../errorHelpers/AppError";
 import { catchAsync } from "../../utils/catchAsync";
 import { sendResponse } from "../../utils/sendResponse";
-import { setAuthCookie } from "../../utils/setCookie";
+import { setAuthCookie, clearAuthCookie } from "../../utils/setCookie";
 import { createUserTokens } from "../../utils/userTokens";
 import { AuthServices } from "./auth.service";
 
@@ -16,10 +16,15 @@ const credentialsLogin = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     passport.authenticate("local", async (err: any, user: any, info: any) => {
       if (err) {
-        return next(new AppError(401, err));
+        return next(
+          new AppError(
+            httpStatus.UNAUTHORIZED,
+            err.message || "Authentication failed",
+          ),
+        );
       }
       if (!user) {
-        return next(new AppError(401, info.message));
+        return next(new AppError(httpStatus.UNAUTHORIZED, info.message));
       }
 
       const userTokens = await createUserTokens(user);
@@ -68,16 +73,7 @@ const getNewAccessToken = catchAsync(
 
 const logout = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    res.clearCookie("accessToken", {
-      httpOnly: true,
-      secure: false,
-      sameSite: "lax",
-    });
-    res.clearCookie("refreshToken", {
-      httpOnly: true,
-      secure: false,
-      sameSite: "lax",
-    });
+    clearAuthCookie(res);
 
     sendResponse(res, {
       success: true,
@@ -99,22 +95,6 @@ const changePassword = catchAsync(
       newPassword,
       decodedToken as JwtPayload
     );
-
-    sendResponse(res, {
-      success: true,
-      statusCode: httpStatus.OK,
-      message: "Password Changed Successfully",
-      data: null,
-    });
-  }
-);
-
-const setPassword = catchAsync(
-  async (req: Request, res: Response, next: NextFunction) => {
-    const decodedToken = req.user as JwtPayload;
-    const { password } = req.body;
-
-    await AuthServices.setPassword(decodedToken.userId, password);
 
     sendResponse(res, {
       success: true,
@@ -154,5 +134,5 @@ export const AuthControllers = {
   logout,
   changePassword,
   googleCallbackController,
-  setPassword,
 };
+

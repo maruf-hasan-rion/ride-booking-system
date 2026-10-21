@@ -16,7 +16,9 @@ export const handlerZodError = (err: any): TGenericErrorResponse => {
 
   return {
     statusCode: 400,
-    message: "Zod Error",
+    // Surface the actual validation message instead of a generic "Zod Error"
+    // so clients (and users) see what is wrong directly.
+    message: errorSources[0]?.message ?? "Invalid request data",
     errorSources,
   };
 };
