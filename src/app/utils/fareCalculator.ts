@@ -1,34 +1,58 @@
-const getDistanceInKm = (
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number
+import axios from "axios";
+import { envVars } from "../config/env";
+import AppError from "../errorHelpers/AppError";
+import httpStatus from "http-status-codes";
+
+const ORS_ROUTE_ENDPOINT =
+  "https://api.openrouteservice.org/v2/directions/driving-car/geojson";
+
+export const fareCalulator = async (
+  pickup: [number, number],
+  destination: [number, number],
+  baseFarePerKm = 100
 ) => {
-  const R = 6371; // Radius of Earth in km
-  const dLat = (lat2 - lat1) * (Math.PI / 180);
-  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  try {
+    const res = await axios.post(
+      ORS_ROUTE_ENDPOINT,
+      {
+        coordinates: [
+          [pickup[0], pickup[1]],
+          [destination[0], destination[1]],
+        ],
+      },
+      {
+        headers: {
+          Authorization: envVars.ORS_API_KEY,
+          "Content-Type": "application/json",
+        },
+        timeout: 15000,
+      }
+    );
 
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * (Math.PI / 180)) *
-      Math.cos(lat2 * (Math.PI / 180)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
+    const route = res.data.features[0];
+    const distanceInMeters = route?.properties?.summary?.distance;
 
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    if (typeof distanceInMeters !== "number" || distanceInMeters <= 0) {
+      throw new AppError(
+        httpStatus.SERVICE_UNAVAILABLE,
+        "Routing service returned no usable route. Please try again shortly."
+      );
+    }
 
-  return R * c; // Distance in km
-};
+    const distanceKm = parseFloat((distanceInMeters / 1000).toFixed(2));
+    const fare = parseFloat((distanceKm * baseFarePerKm).toFixed(2));
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const calculateFare = (ride: any) => {
-  const baseFare = 50; // Flat base fare
-  const perKmRate = 20; // Rate per kilometer
-
-  const { lat: pickupLat, lng: pickupLng } = ride.pickupLocation;
-  const { lat: destLat, lng: destLng } = ride.destination;
-
-  const distance = getDistanceInKm(pickupLat, pickupLng, destLat, destLng);
-
-  return Math.round(baseFare + distance * perKmRate);
+    return {
+      distanceKm,
+      fare,
+    };
+  } catch (err) {
+    if (err instanceof AppError) {
+      throw err;
+    }
+    throw new AppError(
+      httpStatus.SERVICE_UNAVAILABLE,
+      "Route distance service is unavailable. Please try again shortly."
+    );
+  }
 };
