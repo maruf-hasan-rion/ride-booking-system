@@ -10,6 +10,7 @@ const buildLimiter = (
     limit: max,
     standardHeaders: "draft-7",
     legacyHeaders: false,
+    skip: () => process.env.NODE_ENV === "test",
     handler: (_req, res) => {
       res.status(429).json({
         success: false,
@@ -37,4 +38,10 @@ export const rideRequestRateLimiter = buildLimiter(
   30,
   10 * 60 * 1000,
   "Too many ride requests in a short period. Please slow down.",
+);
+
+export const driverQueueRateLimiter = buildLimiter(
+  300,
+  10 * 60 * 1000,
+  "Too many queue refreshes. Please slow down.",
 );

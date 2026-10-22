@@ -22,7 +22,7 @@ const userSchema = new Schema<IUser>(
   {
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true },
-    password: { type: String },
+    password: { type: String, select: false },
     role: {
       type: String,
       enum: Object.values(Role),
@@ -30,6 +30,7 @@ const userSchema = new Schema<IUser>(
     contactNo: { type: String },
     isVerified: { type: Boolean, default: false },
     isBlocked: { type: Boolean, default: false },
+    tokenVersion: { type: Number, default: 0 },
     status: {
       type: String,
       enum: Object.values(AccountStatus),

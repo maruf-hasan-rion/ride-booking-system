@@ -147,6 +147,26 @@ const updateRideStatus = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const cancelAssignedRide = catchAsync(async (req: Request, res: Response) => {
+  const rideId = req.params.id;
+  const { reason } = req.body;
+  const decodeToken = req.user as JwtPayload;
+  const driverId = decodeToken.userId;
+
+  const ride = await DriverServices.cancelAssignedRide(
+    rideId,
+    driverId,
+    reason,
+  );
+
+  sendResponse(res, {
+    success: true,
+    statusCode: httpStatus.OK,
+    message: "Ride Cancelled By Driver",
+    data: ride,
+  });
+});
+
 const myEarnings = catchAsync(async (req: Request, res: Response) => {
   const decodeToken = req.user as JwtPayload;
   const driverId = decodeToken.userId;
@@ -203,6 +223,7 @@ export const driverController = {
   acceptRideRequest,
   rejectRideRequest,
   updateRideStatus,
+  cancelAssignedRide,
   myEarnings,
   allDrivers,
   approveDriver,

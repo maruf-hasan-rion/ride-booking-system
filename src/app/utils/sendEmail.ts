@@ -7,16 +7,16 @@ import { envVars } from "../config/env";
 import AppError from "../errorHelpers/AppError";
 import httpStatus from "http-status-codes";
 
-const transporter = nodemailer.createTransport({
-  // port: envVars.EMAIL_SENDER.SMTP_PORT,
-  secure: true,
-  auth: {
-    user: envVars.EMAIL_SENDER.SMTP_USER,
-    pass: envVars.EMAIL_SENDER.SMTP_PASS,
-  },
-  port: Number(envVars.EMAIL_SENDER.SMTP_PORT),
-  host: envVars.EMAIL_SENDER.SMTP_HOST,
-});
+const createTransporter = () =>
+  nodemailer.createTransport({
+    secure: true,
+    auth: {
+      user: envVars.EMAIL_SENDER.SMTP_USER,
+      pass: envVars.EMAIL_SENDER.SMTP_PASS,
+    },
+    port: Number(envVars.EMAIL_SENDER.SMTP_PORT),
+    host: envVars.EMAIL_SENDER.SMTP_HOST,
+  });
 
 interface SendEmailOptions {
   to: string;
@@ -37,11 +37,22 @@ export const sendEmail = async ({
   templateData,
   attachments,
 }: SendEmailOptions) => {
+  if (
+    !envVars.EMAIL_SENDER.SMTP_HOST ||
+    !envVars.EMAIL_SENDER.SMTP_USER ||
+    !envVars.EMAIL_SENDER.SMTP_PASS
+  ) {
+    throw new AppError(
+      httpStatus.SERVICE_UNAVAILABLE,
+      "Email service is not configured.",
+    );
+  }
+
   try {
     const templatePath = path.join(__dirname, `templates/${templateName}.ejs`);
     const html = await ejs.renderFile(templatePath, templateData);
-    const info = await transporter.sendMail({
-      from: envVars.EMAIL_SENDER.SMTP_FROM,
+    const info = await createTransporter().sendMail({
+      from: envVars.EMAIL_SENDER.SMTP_FROM || envVars.EMAIL_SENDER.SMTP_USER,
       to: to,
       subject: subject,
       html: html,

@@ -10,6 +10,22 @@ import { AuthValidations } from "./auth.validation";
 
 const router = Router();
 
+const requireGoogleConfigured = (
+  _req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  if (!envVars.GOOGLE_CLIENT_ID || !envVars.GOOGLE_CLIENT_SECRET) {
+    res.status(503).json({
+      success: false,
+      message: "Google sign-in is not configured on this server.",
+    });
+    return;
+  }
+
+  next();
+};
+
 const getGoogleCallbackUrl = (req: Request) => {
   const forwardedProto = req
     .get("x-forwarded-proto")
@@ -47,6 +63,7 @@ router.post(
 
 router.get(
   "/google",
+  requireGoogleConfigured,
   async (req: Request, res: Response, next: NextFunction) => {
     const redirect = req.query.redirect || "/";
     const callbackURL = getGoogleCallbackUrl(req);
@@ -64,13 +81,14 @@ router.get(
 
 router.get(
   "/google/callback",
+  requireGoogleConfigured,
   (req: Request, res: Response, next: NextFunction) => {
     const callbackURL = getGoogleCallbackUrl(req);
 
     passport.authenticate(
       "google",
       {
-        failureRedirect: "/login",
+        failureRedirect: `${envVars.FRONTEND_URL}/login`,
         callbackURL,
       } as unknown as passport.AuthenticateOptions
     )(req, res, next);

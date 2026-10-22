@@ -41,6 +41,8 @@ export interface IUser {
   isVerified?: boolean;
   isBlocked?: boolean;
   status?: AccountStatus;
+  /** Incremented when sessions must be invalidated (for example, password change). */
+  tokenVersion?: number;
   auths: IAuthProvider[];
   riderStatus: RiderStatus;
   createdAt?: Date;

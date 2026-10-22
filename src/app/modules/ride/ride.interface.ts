@@ -17,6 +17,8 @@ export enum RideStatus {
 
 export enum RideCancelReason {
   BY_RIDER = "BY_RIDER",
+  BY_DRIVER = "BY_DRIVER",
+  BY_ADMIN = "BY_ADMIN",
   NO_DRIVER = "NO_DRIVER",
 }
 
@@ -30,6 +32,9 @@ export interface IRide {
   distance?: number;
   status: RideStatus;
   cancelReason?: RideCancelReason;
+  cancelNote?: string;
+  cancelledBy?: Types.ObjectId;
+  idempotencyKey?: string;
   timestamps: {
     requestedAt: Date;
     acceptedAt?: Date;

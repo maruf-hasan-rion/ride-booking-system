@@ -6,11 +6,18 @@ import httpStatus from "http-status-codes";
 const ORS_ROUTE_ENDPOINT =
   "https://api.openrouteservice.org/v2/directions/driving-car/geojson";
 
-export const fareCalulator = async (
+export const calculateRoadFare = async (
   pickup: [number, number],
   destination: [number, number],
   baseFarePerKm = 100
 ) => {
+  if (!envVars.ORS_API_KEY) {
+    throw new AppError(
+      httpStatus.SERVICE_UNAVAILABLE,
+      "Route distance service is not configured. Please try again later."
+    );
+  }
+
   try {
     const res = await axios.post(
       ORS_ROUTE_ENDPOINT,
@@ -25,7 +32,7 @@ export const fareCalulator = async (
           Authorization: envVars.ORS_API_KEY,
           "Content-Type": "application/json",
         },
-        timeout: 15000,
+        timeout: 8000,
       }
     );
 

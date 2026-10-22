@@ -4,7 +4,7 @@ import { NextFunction, Request, Response } from "express";
 import httpStatus from "http-status-codes";
 import { catchAsync } from "../../utils/catchAsync";
 import { sendResponse } from "../../utils/sendResponse";
-import { blockUser, unblockUser, UserServices } from "./user.service";
+import { UserServices } from "./user.service";
 import { JwtPayload } from "jsonwebtoken";
 
 const registerUser = catchAsync(
@@ -83,7 +83,10 @@ const getSingleUser = catchAsync(
 
 const blockUserAccount = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const user = await UserServices.blockUser(req.params.id);
+    const user = await UserServices.blockUser(
+      req.params.id,
+      req.user as JwtPayload,
+    );
 
     sendResponse(res, {
       success: true,
@@ -95,7 +98,10 @@ const blockUserAccount = catchAsync(
 );
 const unblockUserAccount = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const user = await UserServices.unblockUser(req.params.id);
+    const user = await UserServices.unblockUser(
+      req.params.id,
+      req.user as JwtPayload,
+    );
 
     sendResponse(res, {
       success: true,

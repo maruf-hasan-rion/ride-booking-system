@@ -1,10 +1,13 @@
 import { config as loadDotenv } from "dotenv";
 
-// Test config precedence: the developer's real .env wins (real ORS key, real
-// service creds — the suite makes real route calls), dummies only fill gaps.
+// Tests exercise business behavior, not per-IP rate-limit counters. Set this
+// before dotenv so a developer .env cannot override it.
+process.env.NODE_ENV = "test";
+
+// Test config precedence: the developer's .env fills real credentials where
+// present; dummies keep optional services from blocking the offline suite.
 loadDotenv();
 
-process.env.NODE_ENV = process.env.NODE_ENV ?? "test";
 process.env.PORT = process.env.PORT ?? "0";
 process.env.DB_URL = process.env.DB_URL ?? "mongodb://dummy:dummy@127.0.0.1:1/test-db";
 process.env.BCRYPT_SALT_ROUND = process.env.BCRYPT_SALT_ROUND ?? "10";

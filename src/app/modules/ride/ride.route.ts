@@ -40,6 +40,12 @@ router.get(
   checkAuth(Role.ADMIN),
   rideControllers.getSingleRideForAdmin
 );
+router.patch(
+  "/admin-cancel/:id",
+  checkAuth(Role.ADMIN, Role.SUPER_ADMIN),
+  validateRequest(RideValidations.adminCancelRideZodSchema),
+  rideControllers.adminCancelRide
+);
 router.get(
   "/all-rides-admin",
   checkAuth(Role.ADMIN),

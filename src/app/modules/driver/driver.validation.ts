@@ -36,9 +36,16 @@ const updateRideStatusZodSchema = z.object({
   }),
 });
 
+const cancelAssignedRideZodSchema = z.object({
+  body: z.object({
+    reason: z.string().trim().min(3).max(200).optional(),
+  }),
+});
+
 export const DriverValidations = {
   createDriverProfileZodSchema,
   updateDriverProfileZodSchema,
   updateDriverStatusZodSchema,
   updateRideStatusZodSchema,
+  cancelAssignedRideZodSchema,
 };

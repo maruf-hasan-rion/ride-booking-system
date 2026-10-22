@@ -1,7 +1,7 @@
 ﻿import { Driver } from "./driver.model";
 import { User } from "../user/user.model";
 import { Ride } from "../ride/ride.model";
-import { RideStatus } from "../ride/ride.interface";
+import { RideCancelReason, RideStatus } from "../ride/ride.interface";
 import { AccountStatus, RiderStatus } from "../user/user.interface";
 import AppError from "../../errorHelpers/AppError";
 import httpStatus from "http-status-codes";
@@ -11,6 +11,7 @@ import {
   RIDE_TRANSITION_SOURCE,
   RIDE_TRANSITION_TIMESTAMP_FIELD,
 } from "../ride/ride.constants";
+import { withTransaction } from "../../utils/withTransaction";
 import { expireStaleRequestedRides } from "../ride/ride.service";
 
 /**
@@ -52,7 +53,17 @@ const createDriver = async (userId: string, vehicleInfo?: string) => {
     throw new AppError(httpStatus.CONFLICT, "Driver profile already exists.");
   }
 
-  return Driver.create({ user: userId, vehicleInfo });
+  try {
+    return await Driver.create({ user: userId, vehicleInfo });
+  } catch (error) {
+    if ((error as { code?: number })?.code === 11000) {
+      throw new AppError(
+        httpStatus.CONFLICT,
+        "Driver profile already exists.",
+      );
+    }
+    throw error;
+  }
 };
 
 const updateDriverProfile = async (userId: string, vehicleInfo: string) => {
@@ -76,12 +87,15 @@ const getIncomingRequests = async (
   userId: string,
   query: Record<string, string> = {}
 ) => {
-  const driverProfile = await requireDriverProfile(userId);
+  const driverProfile = await requireDriverProfile(userId, {
+    approvedAndOnline: true,
+  });
 
   await expireStaleRequestedRides();
 
-  const page = Number(query.page) || 1;
-  const limit = Number(query.limit) || 10;
+  const page = Math.max(1, Number(query.page) || 1);
+  const requestedLimit = Number(query.limit) || 10;
+  const limit = Math.min(Math.max(requestedLimit, 1), 50);
   const skip = (page - 1) * limit;
 
   const searchTerm = query.searchTerm?.trim().toLowerCase() ?? "";
@@ -100,11 +114,32 @@ const getIncomingRequests = async (
         foreignField: "_id",
         as: "rider",
         pipeline: [
-          { $project: { _id: 1, name: 1, email: 1, contactNo: 1 } },
+          { $project: { _id: 1, name: 1 } },
         ],
       },
     },
     { $unwind: { path: "$rider", preserveNullAndEmptyArrays: true } },
+    {
+      // Before acceptance the driver only needs an approximate pickup area.
+      // Exact coordinates remain available from /driver/active-ride after the
+      // claim, and are never rounded in storage.
+      $addFields: {
+        "pickupLocation.coordinates": {
+          $map: {
+            input: "$pickupLocation.coordinates",
+            as: "coordinate",
+            in: { $round: ["$$coordinate", 3] },
+          },
+        },
+        "destination.coordinates": {
+          $map: {
+            input: "$destination.coordinates",
+            as: "coordinate",
+            in: { $round: ["$$coordinate", 3] },
+          },
+        },
+      },
+    } as PipelineStage,
   ];
 
   if (searchTerm) {
@@ -115,8 +150,6 @@ const getIncomingRequests = async (
       $match: {
         $or: [
           { "rider.name": re },
-          { "rider.email": re },
-          { "rider.contactNo": re },
           {
             $expr: {
               $regexMatch: {
@@ -203,79 +236,80 @@ const getMyProfile = async (userId: string) => {
  * rejects with a clean 409.
  */
 const acceptRide = async (rideId: string, driverId: string) => {
-  const MAX_RETRIES = 2;
-
   await expireStaleRequestedRides();
 
-  const attempt = async (): Promise<unknown> => {
-    const session = await Ride.startSession();
-    session.startTransaction();
+  return withTransaction(async (session) => {
+    // Claim the driver document as well as the ride. Two different rides
+    // cannot both move to ACCEPTED for the same driver because this is a
+    // write to one shared document, so MongoDB serializes the claim.
+    const driverProfile = await Driver.findOneAndUpdate(
+      {
+        user: driverId,
+        isApproved: true,
+        isOnline: true,
+        activeRideId: null,
+      },
+      { $set: { activeRideId: rideId } },
+      { returnDocument: "after", session },
+    );
 
-    try {
-      const driverProfile = await Driver.findOne({ user: driverId }).session(session);
-      if (!driverProfile || !driverProfile.isApproved || !driverProfile.isOnline) {
+    if (!driverProfile) {
+      const existing = await Driver.findOne({ user: driverId }).session(session);
+
+      if (!existing) {
+        throw new AppError(httpStatus.NOT_FOUND, "Driver profile not found.");
+      }
+      if (!existing.isApproved || !existing.isOnline) {
         throw new AppError(
           httpStatus.FORBIDDEN,
           "Driver is not approved or online.",
         );
       }
 
-      const hasActiveRide = await Ride.exists({
-        driverId: driverProfile._id,
-        status: { $in: DRIVER_ACTIVE_RIDE_STATUSES },
-      }).session(session);
-
-      if (hasActiveRide) {
-        throw new AppError(
-          httpStatus.CONFLICT,
-          "You already have an active ride.",
-        );
-      }
-
-      const ride = await Ride.findOneAndUpdate(
-        {
-          _id: rideId,
-          status: RideStatus.REQUESTED,
-          rejectedBy: { $ne: driverProfile._id },
-        },
-        {
-          $set: {
-            driverId: driverProfile._id,
-            status: RideStatus.ACCEPTED,
-            "timestamps.acceptedAt": new Date(),
-          },
-        },
-        { returnDocument: "after", session },
+      throw new AppError(
+        httpStatus.CONFLICT,
+        "You already have an active ride.",
       );
-
-      if (!ride) {
-        await explainAcceptBlock(rideId, driverProfile._id.toString(), session);
-        throw new AppError(httpStatus.CONFLICT, "Ride could not be accepted.");
-      }
-
-      await session.commitTransaction();
-      session.endSession();
-      return ride;
-    } catch (error) {
-      await session.abortTransaction();
-      session.endSession();
-      throw error;
     }
-  };
 
-  for (let attemptNumber = 0; attemptNumber <= MAX_RETRIES; attemptNumber += 1) {
-    try {
-      return await attempt();
-    } catch (error) {
-      const labels = (error as { errorLabels?: string[] })?.errorLabels ?? [];
-      const transient = labels.includes("TransientTransactionError");
-      if (!transient || attemptNumber === MAX_RETRIES) {
-        throw error;
-      }
+    // Legacy active rides created before activeRideId existed still block the
+    // driver, even though the lock above could be acquired.
+    const legacyActiveRide = await Ride.exists({
+      driverId: driverProfile._id,
+      status: { $in: DRIVER_ACTIVE_RIDE_STATUSES },
+      _id: { $ne: rideId },
+    }).session(session);
+
+    if (legacyActiveRide) {
+      throw new AppError(
+        httpStatus.CONFLICT,
+        "You already have an active ride.",
+      );
     }
-  }
 
-  throw new AppError(httpStatus.CONFLICT, "Ride could not be accepted.");
+    const ride = await Ride.findOneAndUpdate(
+      {
+        _id: rideId,
+        status: RideStatus.REQUESTED,
+        rejectedBy: { $ne: driverProfile._id },
+      },
+      {
+        $set: {
+          driverId: driverProfile._id,
+          status: RideStatus.ACCEPTED,
+          "timestamps.acceptedAt": new Date(),
+        },
+      },
+      { returnDocument: "after", session },
+    );
+
+    if (!ride) {
+      await explainAcceptBlock(rideId, driverProfile._id.toString(), session);
+      throw new AppError(httpStatus.CONFLICT, "Ride could not be accepted.");
+    }
+
+    return ride;
+  });
 };
 
 const explainAcceptBlock = async (
@@ -358,10 +392,7 @@ const updateRideStatus = async (
   driverId: string,
   status: RideStatus.PICKED_UP | RideStatus.IN_TRANSIT | RideStatus.ARRIVED | RideStatus.COMPLETED
 ) => {
-  const session = await Ride.startSession();
-  session.startTransaction();
-
-  try {
+  return withTransaction(async (session) => {
     const driverProfile = await Driver.findOne({ user: driverId }).session(session);
     if (!driverProfile) {
       throw new AppError(httpStatus.FORBIDDEN, "Not assigned to this ride.");
@@ -412,14 +443,16 @@ const updateRideStatus = async (
       { session }
     );
 
-    await session.commitTransaction();
-    session.endSession();
+    if (status === RideStatus.COMPLETED) {
+      await Driver.updateOne(
+        { _id: driverProfile._id, activeRideId: ride._id },
+        { $set: { activeRideId: null } },
+        { session },
+      );
+    }
+
     return ride;
-  } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
-    throw error;
-  }
+  });
 };
 
 /** Throws the precise error for a failed status-update claim. */
@@ -456,11 +489,103 @@ const explainStatusBlock = async (
   );
 };
 
+const cancelAssignedRide = async (
+  rideId: string,
+  driverUserId: string,
+  reason?: string,
+) => {
+  return withTransaction(async (session) => {
+    const driverProfile = await Driver.findOne({
+      user: driverUserId,
+    }).session(session);
+
+    if (!driverProfile) {
+      throw new AppError(httpStatus.NOT_FOUND, "Driver profile not found.");
+    }
+
+    const ride = await Ride.findOneAndUpdate(
+      {
+        _id: rideId,
+        driverId: driverProfile._id,
+        status: RideStatus.ACCEPTED,
+      },
+      {
+        $set: {
+          status: RideStatus.CANCELLED,
+          cancelReason: RideCancelReason.BY_DRIVER,
+          cancelNote: reason,
+          cancelledBy: driverUserId,
+          "timestamps.cancelledAt": new Date(),
+        },
+      },
+      { returnDocument: "after", session },
+    );
+
+    if (!ride) {
+      await explainDriverCancelBlock(rideId, driverProfile._id, session);
+      throw new AppError(
+        httpStatus.BAD_REQUEST,
+        "Ride cannot be cancelled.",
+      );
+    }
+
+    await Driver.updateOne(
+      { _id: driverProfile._id, activeRideId: ride._id },
+      { $set: { activeRideId: null } },
+      { session },
+    );
+
+    await User.findByIdAndUpdate(
+      ride.riderId,
+      { riderStatus: RiderStatus.IDLE },
+      { session },
+    );
+
+    return ride;
+  });
+};
+
+const explainDriverCancelBlock = async (
+  rideId: string,
+  driverProfileId: Types.ObjectId,
+  session: ClientSession,
+): Promise<never> => {
+  const existing = await Ride.findById(rideId).session(session);
+
+  if (!existing) {
+    throw new AppError(httpStatus.NOT_FOUND, "Ride not found");
+  }
+  if (existing.driverId?.toString() !== driverProfileId.toString()) {
+    throw new AppError(httpStatus.FORBIDDEN, "Not assigned to this ride.");
+  }
+  if (
+    existing.status === RideStatus.PICKED_UP ||
+    existing.status === RideStatus.IN_TRANSIT ||
+    existing.status === RideStatus.ARRIVED
+  ) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "The ride has started and can no longer be cancelled.",
+    );
+  }
+  if (existing.status === RideStatus.REQUESTED) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "The ride has not been accepted yet. Use reject instead.",
+    );
+  }
+
+  throw new AppError(
+    httpStatus.BAD_REQUEST,
+    `Ride cannot be cancelled in ${existing.status} state.`,
+  );
+};
+
 const driverEarnings = async (driverId: string) => {
   const driverProfile = await requireDriverProfile(driverId);
 
   const rides = await Ride.find({ driverId: driverProfile._id, status: RideStatus.COMPLETED })
-    .select("fare createdAt")
+    .select("fare createdAt timestamps.completedAt")
     .sort({ createdAt: -1 });
 
   return rides;
@@ -545,6 +670,7 @@ export const DriverServices = {
   getMyProfile,
   acceptRide,
   rejectRide,
+  cancelAssignedRide,
   updateRideStatus,
   driverEarnings,
   allDrivers,

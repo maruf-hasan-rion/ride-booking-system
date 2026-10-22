@@ -18,6 +18,17 @@ const createRideRequestZodSchema = z
     },
   );
 
+const adminCancelRideZodSchema = z.object({
+  body: z.object({
+    reason: z
+      .string()
+      .trim()
+      .min(3, "A cancellation reason is required.")
+      .max(200, "Cancellation reason is too long."),
+  }),
+});
+
 export const RideValidations = {
   createRideRequestZodSchema,
+  adminCancelRideZodSchema,
 };

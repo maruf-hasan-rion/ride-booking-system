@@ -6,6 +6,7 @@ export interface IDriver {
   totalEarnings: number;
   isApproved?: boolean;
   isOnline?: boolean;
+  activeRideId?: Types.ObjectId | null;
   createdAt?: Date;
   updatedAt?: Date;
 }

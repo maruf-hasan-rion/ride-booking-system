@@ -8,8 +8,8 @@ Ride-booking backend (rider → driver → admin) built with Express 5, TypeScri
 - **Auth:** email+password (Passport Local) issuing JWT access+refresh tokens in httpOnly cookies *and* response body; `POST /auth/refresh-token` exchange; Google OAuth routes (deployed-environment feature). Blocked/suspended accounts are refused at the auth middleware level.
 - **Ride lifecycle (conflict-safe):** riders book pickup/destination with server-computed road fare (OpenRouteService directions, 100 BDT/km). Drivers view pending requests, accept atomically (`concurrent accepts → one winner + 409`), reject without stealing the ride (ride stays pending for others and the rejecting driver is excluded), and advance `ACCEPTED → PICKED_UP → IN_TRANSIT → ARRIVED → COMPLETED` (skip/repeat → 400/409). Rider cancellation is allowed **until pickup** (`REQUESTED`/`ACCEPTED`), and unaccepted requests expire after **15 minutes** (`cancelReason: NO_DRIVER`) releasing the rider to book again.
 - **Stats:** admin system stats, driver earnings (daily/weekly/monthly) and rider report — earned amounts are derived from collected fares (there is no payments module yet; the split convention exists as `driverIncome = fare`).
-- **Reliability:** request bodies validated with Zod (auth, OTP, rides, profiles); login/OTP/ride-request rate limiters; helmet; consistent error envelope (`success/message/errorSources`); unconditional 5xx never leak `stack` in production.
-- **Testing:** Vitest + `mongodb-memory-server` replica set with **real OpenRouteService** calls — 21 tests covering the whole state machine, both races, ownership/authorization, expiry and validation. `npm test`.
+- **Reliability:** request bodies validated with Zod (auth, OTP, rides, profiles); login/OTP/ride-request/queue rate limiters; helmet; consistent error envelope (`success/message/errorSources`); 5xx responses do not include stack traces in production.
+- **Testing:** Vitest + `mongodb-memory-server` replica set with a deterministic fare provider — the lifecycle, security, and fare-failure suites all run offline. A real-ORS smoke test is opt-in via `RUN_LIVE_ORS=true`. `npm test`.
 
 ## Requirements
 
@@ -22,22 +22,24 @@ Ride-booking backend (rider → driver → admin) built with Express 5, TypeScri
 
 ```bash
 npm install
-npm run seed      # creates admin/rider/driver demo accounts + sample rides through REAL service flows
+npm run seed      # requires SEED_PASSWORD + SEED_ADMIN_PASSWORD; creates demo accounts + sample rides
 npm run dev       # starts on http://localhost:5000
 ```
 
-.env.example documents every variable; copy it to `.env` and fill values (real credentials stay local, never committed).
+.env.example documents every variable. Google, SMTP, Redis and ORS can be left blank: the API still boots, while OTP/booking return a clear 503 until configured.
 
 ### Scripts
 
 | Command | Purpose |
 |---|---|
 | `npm run dev` | `ts-node-dev` watch mode |
-| `npm run build` | `tsc` → `dist/` |
+| `npm run build` | `tsc` + email-template copy → `dist/` |
 | `npm start` | run built server (Vercel target) |
-| `npm test` | Vitest suite (real ORS, in-memory Mongo) |
+| `npm test` | Vitest suite (in-memory Mongo, deterministic fare provider) |
 | `npm run seed` | idempotent seed via service layer (admin/rider/driver + completed/cancelled rides) |
 | `npm run lint` | eslint over `src` |
+
+CI runs lint, build, and the full offline suite. The live-ORS smoke test is opt-in because it depends on the provider's availability.
 
 ## API (base `/api/v1`)
 
@@ -48,14 +50,15 @@ npm run dev       # starts on http://localhost:5000
 | otp | `POST /otp/send`, `/otp/verify` | — | Redis TTL 2 min, throttled |
 | user | `POST /user/register`, `GET /user/me`, `PATCH /user/:id` | public/self | one-time role choice (RIDER/DRIVER) |
 | user | `GET /user`, `PATCH /user/block/:id`, `/unblock/:id` | admin+ | paginated, filtered |
-| ride | `POST /ride/request` | rider | server computes distance+fare |
+| ride | `POST /ride/request` | rider | server computes distance+fare; optional `Idempotency-Key` header |
 | ride | `GET /ride/latest-ride`, `/my-ride/:id`, `/all-my-rides`, `/me` | rider | status tracking/history |
 | ride | `PATCH /ride/cancel/:id` | rider | until pickup (`BY_RIDER`) |
 | ride | `GET /ride/single-ride/:id`, `/all-rides-admin` | admin | db-level pagination/search |
+| ride | `PATCH /ride/admin-cancel/:id` | admin+ | required reason; releases rider + driver lock |
 | driver | `POST/PATCH /driver/profile`, `GET /driver/profile/me` | driver | vehicle info gate |
 | driver | `PATCH /driver/status` | driver | online toggle (needs approval) |
-| driver | `GET /driver/incoming-requests`, `/driver/active-ride` | driver | live queue + own active ride |
-| driver | `PATCH /driver/:id/accept`, `/:id/reject`, `/:id/status` | driver | atomic claims + transition map |
+| driver | `GET /driver/incoming-requests`, `/driver/active-ride` | approved+online driver | minimized queue + own active ride |
+| driver | `PATCH /driver/:id/accept`, `/:id/reject`, `/:id/cancel`, `/:id/status` | driver | atomic claims, pre-pickup cancel, transition map |
 | driver | `GET /driver/earnings/me` | driver | completed fares |
 | stats | `GET /stats/earning-history` | admin | rides + earned money (fare-derived) |
 | stats | `GET /stats/my-earning-history`, `/my-all-ride-history` | driver/rider | scoped reports |
@@ -66,6 +69,8 @@ npm run dev       # starts on http://localhost:5000
 REQUESTED ──accept──> ACCEPTED ──> PICKED_UP ──> IN_TRANSIT ──> ARRIVED ──> COMPLETED
     │  cancel (rider, until pickup)                         (no moves are allowed
     ├──> CANCELLED  (BY_RIDER)                               out of terminal states)
+    ├──cancel (driver, ACCEPTED only)──> CANCELLED (BY_DRIVER)
+    ├──cancel (admin, any non-terminal)──> CANCELLED (BY_ADMIN, reason required)
     └──(15 min TTL, no driver)──> CANCELLED (NO_DRIVER)
 REJECTED rides keep status REQUESTED; the rejecting driver is excluded only.
 ```
@@ -84,10 +89,11 @@ src/
       user/ admin/ auth/ otp/ stats/
     validation/      common field schemas shared by modules
     routes/ index mounts every module under /api/v1
-    utils/           fareCalculator (ORS), QueryBuilder, cookies, tokens, email
+    utils/           fareProvider/fareCalculator, QueryBuilder, withTransaction,
+                     cookies, tokens, email
   scripts/           seed.ts (service-level seed)
   server.ts          connection, super-admin seed, graceful shutdown
-tests/               vitest suites (replica set + real ORS)
+tests/               vitest suites (replica set + deterministic fare provider; live ORS opt-in)
 ```
 
-Known limitations: no payments module (fares settle off-platform), no websockets (5 s polling), same-driver double-accept across two different rides is best-effort guarded. See `../DEPLOYMENT.md` for deployment details and `../ENGINEERING_DECISIONS.md` for the reasoning behind these gloves-off choices.
+Known limitations: no payments module (fares settle off-platform), no websockets (5 s polling), no cancellation fees, driver cancellation is pre-pickup only, and completion evidence is status/timestamp-based (no location or duration proof). Admin cancellation is the operational recovery path for stuck rides. See `../DEPLOYMENT.md` for deployment details and `../ENGINEERING_DECISIONS.md` for the reasoning behind these gloves-off choices.

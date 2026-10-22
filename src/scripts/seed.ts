@@ -16,13 +16,43 @@ import dotenv from "dotenv";
 import { envVars } from "../app/config/env";
 import { Role, RiderStatus, AccountStatus } from "../app/modules/user/user.interface";
 import { User } from "../app/modules/user/user.model";
+import { Driver } from "../app/modules/driver/driver.model";
 import { Ride } from "../app/modules/ride/ride.model";
 import { RideServices } from "../app/modules/ride/ride.service";
 import { DriverServices } from "../app/modules/driver/driver.service";
 
 dotenv.config({ override: false });
 
-const SEED_PASSWORD = "Seed!Ride123";
+const requireSeedPassword = (
+  value: string | undefined,
+  name: string,
+): string => {
+  if (!value || value.length < 12) {
+    throw new Error(`${name} (at least 12 characters) is required.`);
+  }
+  return value;
+};
+
+const SEED_ACCOUNT_PASSWORD = requireSeedPassword(
+  process.env.SEED_PASSWORD,
+  "SEED_PASSWORD",
+);
+const SEED_ADMIN_PASSWORD = requireSeedPassword(
+  process.env.SEED_ADMIN_PASSWORD,
+  "SEED_ADMIN_PASSWORD",
+);
+
+if (
+  envVars.NODE_ENV === "production" &&
+  process.env.ALLOW_DEMO_SEED !== "true"
+) {
+  throw new Error(
+    "Refusing to seed demo accounts in production. Set ALLOW_DEMO_SEED=true only for a dedicated demo database.",
+  );
+}
+
+const passwordForRole = (role: Role): string =>
+  role === Role.ADMIN ? SEED_ADMIN_PASSWORD : SEED_ACCOUNT_PASSWORD;
 
 const DHAKA = [90.4051, 23.7509] as [number, number];   // [lng, lat]
 const MIRPUR = [90.3665, 23.805] as [number, number];
@@ -41,9 +71,25 @@ const SEED_ACCOUNTS: SeedAccountSpec[] = [
 ];
 
 const ensureAccount = async (spec: SeedAccountSpec) => {
+  const hashedPassword = await bcryptjs.hash(
+    passwordForRole(spec.role),
+    Number(envVars.BCRYPT_SALT_ROUND),
+  );
+  const credentials = [
+    { provider: "credentials", providerId: spec.email },
+  ];
   const existing = await User.findOne({ email: spec.email });
 
   if (existing) {
+    existing.name = spec.name;
+    existing.role = spec.role;
+    existing.password = hashedPassword;
+    existing.isVerified = true;
+    existing.auths = credentials;
+    if (existing.status !== AccountStatus.BLOCKED) {
+      existing.status = AccountStatus.ACTIVE;
+    }
+    await existing.save();
     return existing;
   }
 
@@ -51,10 +97,11 @@ const ensureAccount = async (spec: SeedAccountSpec) => {
     name: spec.name,
     email: spec.email,
     role: spec.role,
-    password: await bcryptjs.hash(SEED_PASSWORD, Number(envVars.BCRYPT_SALT_ROUND)),
+    password: hashedPassword,
     isVerified: true,
     contactNo: "+8801700000000",
     status: AccountStatus.ACTIVE,
+    auths: credentials,
   });
 };
 
@@ -91,6 +138,12 @@ const seed = async () => {
   await DriverServices.createDriver(driver._id.toString(), "Toyota Axio, silver, Dhaka Metro D-2233")
     .catch(() => undefined); // profile may already exist
   await DriverServices.approveDriver(driver._id.toString());
+  await DriverServices.driverStatus(driver._id.toString(), true);
+  // A previous interrupted seed may have left a lock behind.
+  await Driver.updateOne(
+    { user: driver._id },
+    { $set: { activeRideId: null } },
+  );
 
   // One completed ride with a REAL propagated fare.
   const completedRideExists = await Ride.exists({
@@ -130,10 +183,10 @@ const seed = async () => {
     await RideServices.cancelRide(booked._id.toString(), rider._id.toString());
   }
 
-  console.log("\nSeed complete — sign in with:");
-  console.log("  admin  :", admin.email, "/", SEED_PASSWORD);
-  console.log("  rider  :", rider.email, "/", SEED_PASSWORD);
-  console.log("  driver :", driver.email, "/", SEED_PASSWORD);
+  console.log("\nSeed complete. Sign in with the configured seed passwords:");
+  console.log("  admin  :", admin.email);
+  console.log("  rider  :", rider.email);
+  console.log("  driver :", driver.email);
 
   await mongoose.disconnect();
 };

@@ -3,7 +3,11 @@ import httpStatus from "http-status-codes";
 import { JwtPayload } from "jsonwebtoken";
 import { envVars } from "../config/env";
 import AppError from "../errorHelpers/AppError";
-import { AccountStatus, IAuthProvider } from "../modules/user/user.interface";
+import {
+  AccountStatus,
+  IAuthProvider,
+  Role,
+} from "../modules/user/user.interface";
 import { User } from "../modules/user/user.model";
 import { verifyToken } from "../utils/jwt";
 
@@ -33,6 +37,19 @@ export const checkAuth =
 
       if (!isUserExist) {
         throw new AppError(httpStatus.UNAUTHORIZED, "User does not exist");
+      }
+
+      const currentTokenVersion = isUserExist.tokenVersion ?? 0;
+      const presentedTokenVersion =
+        typeof verifiedToken.tokenVersion === "number"
+          ? verifiedToken.tokenVersion
+          : 0;
+
+      if (presentedTokenVersion !== currentTokenVersion) {
+        throw new AppError(
+          httpStatus.UNAUTHORIZED,
+          "Session expired. Please log in again.",
+        );
       }
 
       const isSocialAuthUser = isUserExist.auths?.some(
@@ -71,7 +88,9 @@ export const checkAuth =
         throw new AppError(httpStatus.FORBIDDEN, "User is suspended");
       }
 
-      const effectiveRole = (verifiedToken.role || isUserExist.role) as
+      // The database is authoritative for roles; a token role only fills the
+      // gap for legacy/social accounts until role setup completes.
+      const effectiveRole = (isUserExist.role || verifiedToken.role) as
         | string
         | undefined;
 
@@ -83,7 +102,14 @@ export const checkAuth =
           );
         }
 
-        if (!authRoles.includes(effectiveRole)) {
+        const superAdminInheritsAdmin =
+          effectiveRole === Role.SUPER_ADMIN &&
+          authRoles.includes(Role.ADMIN);
+
+        if (
+          !authRoles.includes(effectiveRole) &&
+          !superAdminInheritsAdmin
+        ) {
           throw new AppError(
             httpStatus.FORBIDDEN,
             "You are not permitted to access this route"
@@ -94,6 +120,7 @@ export const checkAuth =
       req.user = {
         ...verifiedToken,
         role: effectiveRole,
+        tokenVersion: currentTokenVersion,
       };
       next();
     } catch (error) {

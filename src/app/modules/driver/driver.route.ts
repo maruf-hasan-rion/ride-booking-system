@@ -2,6 +2,7 @@ import { Router } from "express";
 import { Role } from "../user/user.interface";
 import { checkAuth } from "../../middlewares/checkAuth";
 import { validateRequest } from "../../middlewares/validateRequest";
+import { driverQueueRateLimiter } from "../../middlewares/rateLimiter";
 import { driverController } from "./driver.controller";
 import { DriverValidations } from "./driver.validation";
 
@@ -29,6 +30,7 @@ router.patch(
 router.get(
   "/incoming-requests",
   checkAuth(Role.DRIVER),
+  driverQueueRateLimiter,
   driverController.getIncomingRequests
 );
 router.get("/active-ride", checkAuth(Role.DRIVER), driverController.getActiveRide);
@@ -41,6 +43,12 @@ router.patch(
   "/:id/reject",
   checkAuth(Role.DRIVER),
   driverController.rejectRideRequest
+);
+router.patch(
+  "/:id/cancel",
+  checkAuth(Role.DRIVER),
+  validateRequest(DriverValidations.cancelAssignedRideZodSchema),
+  driverController.cancelAssignedRide
 );
 router.patch(
   "/:id/status",

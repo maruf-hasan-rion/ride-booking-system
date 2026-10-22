@@ -8,6 +8,7 @@ import {
 } from "passport-google-oauth20";
 import { Strategy as LocalStrategy } from "passport-local";
 import { AccountStatus, IAuthProvider } from "../modules/user/user.interface";
+import { canLinkGoogleAccount } from "../utils/accountLinking";
 import { User } from "../modules/user/user.model";
 import { envVars } from "./env";
 
@@ -19,7 +20,7 @@ passport.use(
     },
     async (email: string, password: string, done) => {
       try {
-        const isUserExist = await User.findOne({ email });
+        const isUserExist = await User.findOne({ email }).select("+password");
 
         if (!isUserExist) {
           return done("User does not exist");
@@ -66,21 +67,26 @@ passport.use(
   )
 );
 
-passport.use(
-  new GoogleStrategy(
-    {
-      clientID: envVars.GOOGLE_CLIENT_ID,
-      clientSecret: envVars.GOOGLE_CLIENT_SECRET,
-      callbackURL: envVars.GOOGLE_CALLBACK_URL,
-    },
-    async (
-      accessToken: string,
-      refreshToken: string,
-      profile: Profile,
-      done: VerifyCallback
-    ) => {
-      try {
-        const email = profile.emails?.[0].value;
+if (
+  envVars.GOOGLE_CLIENT_ID &&
+  envVars.GOOGLE_CLIENT_SECRET &&
+  envVars.GOOGLE_CALLBACK_URL
+) {
+  passport.use(
+    new GoogleStrategy(
+      {
+        clientID: envVars.GOOGLE_CLIENT_ID,
+        clientSecret: envVars.GOOGLE_CLIENT_SECRET,
+        callbackURL: envVars.GOOGLE_CALLBACK_URL,
+      },
+      async (
+        accessToken: string,
+        refreshToken: string,
+        profile: Profile,
+        done: VerifyCallback
+      ) => {
+        try {
+          const email = profile.emails?.[0].value;
 
         if (!email) {
           return done(null, false, { mesaage: "No email found" });
@@ -97,6 +103,13 @@ passport.use(
 
         if (user && user.status === AccountStatus.SUSPENDED) {
           return done(null, false, { message: "User is suspended" });
+        }
+
+        if (user && !canLinkGoogleAccount(user)) {
+          return done(null, false, {
+            message:
+              "This email already has an unverified password account. Verify the email before linking Google.",
+          });
         }
 
         if (!user) {
@@ -152,9 +165,10 @@ passport.use(
       } catch (error) {
         return done(error);
       }
-    }
-  )
-);
+      }
+    )
+  );
+}
 
 passport.serializeUser((user: any, done: (err: any, id?: unknown) => void) => {
   done(null, user._id);

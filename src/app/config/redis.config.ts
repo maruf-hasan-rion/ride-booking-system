@@ -18,6 +18,11 @@ redisClient.on("error", (err) => console.log("Redis Client Error", err));
 // console.log(result)  // >>> bar
 
 export const connectRedis = async () => {
+  if (!envVars.REDIS_HOST) {
+    console.log("Redis is not configured; OTP storage is disabled.");
+    return;
+  }
+
   if (!redisClient.isOpen) {
     await redisClient.connect();
     console.log("Redis Connected");

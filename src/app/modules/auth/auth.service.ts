@@ -7,13 +7,7 @@ import { createNewAccessTokenWithRefreshToken } from "../../utils/userTokens";
 import { User } from "../user/user.model";
 
 const getNewAccessToken = async (refreshToken: string) => {
-  const newAccessToken = await createNewAccessTokenWithRefreshToken(
-    refreshToken
-  );
-
-  return {
-    accessToken: newAccessToken,
-  };
+  return createNewAccessTokenWithRefreshToken(refreshToken);
 };
 
 const changePassword = async (
@@ -21,7 +15,7 @@ const changePassword = async (
   newPassword: string,
   decodedToken: JwtPayload
 ) => {
-  const user = await User.findById(decodedToken.userId);
+  const user = await User.findById(decodedToken.userId).select("+password");
 
   if (!user || !user.password) {
     throw new AppError(httpStatus.NOT_FOUND, "User password not found");
@@ -37,6 +31,8 @@ const changePassword = async (
     newPassword,
     Number(envVars.BCRYPT_SALT_ROUND)
   );
+  // Invalidate every access/refresh token issued before this password change.
+  user.tokenVersion = (user.tokenVersion ?? 0) + 1;
 
   await user.save();
 };

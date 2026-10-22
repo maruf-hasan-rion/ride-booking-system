@@ -1,12 +1,15 @@
 import { Ride } from "./ride.model";
 import { ClientSession, PipelineStage } from "mongoose";
 import { User } from "../user/user.model";
+import { Driver } from "../driver/driver.model";
 import { IRide, RideCancelReason, RideStatus } from "./ride.interface";
 import httpStatus from "http-status-codes";
 import AppError from "../../errorHelpers/AppError";
 import { RiderStatus } from "../user/user.interface";
-import { fareCalulator } from "../../utils/fareCalculator";
+import { calculateFare } from "../../utils/fareProvider";
 import { QueryBuilder } from "../../utils/QueryBuilder";
+import { withTransaction } from "../../utils/withTransaction";
+import { MAX_LIMIT } from "../../constants";
 import {
   RIDER_ACTIVE_RIDE_STATUSES,
   RIDE_REQUEST_TTL_MS,
@@ -34,84 +37,169 @@ export const expireStaleRequestedRides = async () => {
   const staleIds = stale.map((ride) => ride._id);
   const riderIds = [...new Set(stale.map((ride) => ride.riderId))];
 
-  await Ride.updateMany(
-    {
-      _id: { $in: staleIds },
-      status: RideStatus.REQUESTED,
-      "timestamps.requestedAt": { $lt: cutoff },
-    },
-    {
-      $set: {
-        status: RideStatus.CANCELLED,
-        cancelReason: RideCancelReason.NO_DRIVER,
-        "timestamps.cancelledAt": new Date(),
-      },
-    },
-  );
-
-  // Only reset riders that have no remaining live ride.
-  const stillLiveRiderIds = await Ride.distinct("riderId", {
-    riderId: { $in: riderIds },
-    status: { $in: RIDER_ACTIVE_RIDE_STATUSES },
-  });
-  const stillLiveSet = new Set(stillLiveRiderIds.map((id) => id.toString()));
-  const ridersToReset = riderIds.filter((id) => !stillLiveSet.has(id.toString()));
-
-  if (ridersToReset.length > 0) {
-    await User.updateMany(
-      { _id: { $in: ridersToReset }, riderStatus: RiderStatus.REQUESTED },
-      { riderStatus: RiderStatus.IDLE },
-    );
-  }
-};
-
-const requestRide = async (payload: IRide) => {
-  // Expire stale requests before opening the transaction so the rider-state
-  // checks below observe the reset instead of a stale snapshot.
-  await expireStaleRequestedRides();
-
+  // The ride cancellation and the rider release must be one unit of work.
+  // Otherwise a crash/timeout between them leaves a rider with no live ride
+  // but a blocking REQUESTED status, which no future expiry scan can repair.
   const session = await Ride.startSession();
   session.startTransaction();
 
   try {
-    const rider = await User.findById(payload.riderId).session(session);
-    if (!rider) {
-      throw new AppError(httpStatus.NOT_FOUND, "Rider not found.");
-    }
+    await Ride.updateMany(
+      {
+        _id: { $in: staleIds },
+        status: RideStatus.REQUESTED,
+        "timestamps.requestedAt": { $lt: cutoff },
+      },
+      {
+        $set: {
+          status: RideStatus.CANCELLED,
+          cancelReason: RideCancelReason.NO_DRIVER,
+          "timestamps.cancelledAt": new Date(),
+        },
+      },
+      { session },
+    );
 
-    if (
-      rider.riderStatus === RiderStatus.REQUESTED ||
-      rider.riderStatus === RiderStatus.ON_RIDE
-    ) {
-      throw new AppError(
-        httpStatus.BAD_REQUEST,
-        `You already have a ride in ${rider.riderStatus} state.`,
+    // Only reset riders that have no remaining live ride.
+    const stillLiveRiderIds = await Ride.find({
+      riderId: { $in: riderIds },
+      status: { $in: RIDER_ACTIVE_RIDE_STATUSES },
+    })
+      .distinct("riderId")
+      .session(session);
+    const stillLiveSet = new Set(
+      stillLiveRiderIds.map((id) => id.toString()),
+    );
+    const ridersToReset = riderIds.filter(
+      (id) => !stillLiveSet.has(id.toString()),
+    );
+
+    if (ridersToReset.length > 0) {
+      await User.updateMany(
+        { _id: { $in: ridersToReset }, riderStatus: RiderStatus.REQUESTED },
+        { riderStatus: RiderStatus.IDLE },
+        { session },
       );
     }
 
-    const { distanceKm, fare } = await fareCalulator(
-      payload.pickupLocation.coordinates,
-      payload.destination.coordinates,
-    );
-
-    const ride = await Ride.create(
-      [{ ...payload, distance: distanceKm, fare }],
-      { session },
-    );
-
-    await User.findByIdAndUpdate(
-      payload.riderId,
-      { riderStatus: RiderStatus.REQUESTED },
-      { session },
-    );
-
     await session.commitTransaction();
-    session.endSession();
-
-    return { data: ride[0] };
   } catch (error) {
     await session.abortTransaction();
-    session.endSession();
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+};
+
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{8,100}$/;
+
+const findIdempotentRide = async (key: string, riderId: string) => {
+  const existing = await Ride.findOne({ idempotencyKey: key });
+  if (!existing) {
+    return null;
+  }
+
+  if (String(existing.riderId) !== String(riderId)) {
+    throw new AppError(
+      httpStatus.CONFLICT,
+      "This idempotency key belongs to another rider.",
+    );
+  }
+
+  return { data: existing };
+};
+
+const requestRide = async (payload: IRide, idempotencyKey?: string) => {
+  const key = idempotencyKey?.trim();
+
+  if (key && !IDEMPOTENCY_KEY_PATTERN.test(key)) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "Invalid Idempotency-Key. Use 8-100 letters, numbers, underscores or hyphens.",
+    );
+  }
+
+  if (key) {
+    const existing = await findIdempotentRide(key, String(payload.riderId));
+    if (existing) {
+      return existing;
+    }
+  }
+
+  // Expire stale requests before opening the transaction so the rider-state
+  // checks below observe the reset instead of a stale snapshot.
+  await expireStaleRequestedRides();
+
+  const rider = await User.findById(payload.riderId).lean();
+  if (!rider) {
+    throw new AppError(httpStatus.NOT_FOUND, "Rider not found.");
+  }
+
+  if (
+    rider.riderStatus === RiderStatus.REQUESTED ||
+    rider.riderStatus === RiderStatus.ON_RIDE
+  ) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      `You already have a ride in ${rider.riderStatus} state.`,
+    );
+  }
+
+  // Never hold a MongoDB transaction open across an external provider call.
+  const { distanceKm, fare } = await calculateFare(
+    payload.pickupLocation.coordinates,
+    payload.destination.coordinates,
+  );
+
+  try {
+    return await withTransaction(async (session) => {
+      const currentRider = await User.findById(payload.riderId).session(session);
+      if (!currentRider) {
+        throw new AppError(httpStatus.NOT_FOUND, "Rider not found.");
+      }
+
+      // Re-check inside the transaction: another booking may have won while
+      // the fare provider was running.
+      if (
+        currentRider.riderStatus === RiderStatus.REQUESTED ||
+        currentRider.riderStatus === RiderStatus.ON_RIDE
+      ) {
+        throw new AppError(
+          httpStatus.BAD_REQUEST,
+          `You already have a ride in ${currentRider.riderStatus} state.`,
+        );
+      }
+
+      const ride = await Ride.create(
+        [
+          {
+            ...payload,
+            distance: distanceKm,
+            fare,
+            ...(key ? { idempotencyKey: key } : {}),
+          },
+        ],
+        { session },
+      );
+
+      await User.findByIdAndUpdate(
+        payload.riderId,
+        { riderStatus: RiderStatus.REQUESTED },
+        { session },
+      );
+
+      return { data: ride[0] };
+    });
+  } catch (error) {
+    // A concurrent retry with the same key may lose the unique-index race or
+    // observe the winner's riderStatus. Return the winner if it exists.
+    if (key) {
+      const existing = await findIdempotentRide(key, String(payload.riderId));
+      if (existing) {
+        return existing;
+      }
+    }
+
     throw error;
   }
 };
@@ -133,10 +221,7 @@ const requestedRide = async (userId: string) => {
  * conflict response instead of corrupting state.
  */
 const cancelRide = async (rideId: string, riderId: string) => {
-  const session = await Ride.startSession();
-  session.startTransaction();
-
-  try {
+  return withTransaction(async (session) => {
     const ride = await Ride.findOneAndUpdate(
       {
         _id: rideId,
@@ -147,6 +232,7 @@ const cancelRide = async (rideId: string, riderId: string) => {
         $set: {
           status: RideStatus.CANCELLED,
           cancelReason: RideCancelReason.BY_RIDER,
+          cancelledBy: riderId,
           "timestamps.cancelledAt": new Date(),
         },
       },
@@ -167,15 +253,16 @@ const cancelRide = async (rideId: string, riderId: string) => {
       { session },
     );
 
-    await session.commitTransaction();
-    session.endSession();
+    if (ride.driverId) {
+      await Driver.updateOne(
+        { _id: ride.driverId, activeRideId: ride._id },
+        { $set: { activeRideId: null } },
+        { session },
+      );
+    }
 
     return ride;
-  } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
-    throw error;
-  }
+  });
 };
 
 /** Throws the precise error for a failed cancel claim. */
@@ -211,10 +298,103 @@ const explainCancelBlock = async (
   );
 };
 
+const ADMIN_CANCELLABLE_STATUSES: RideStatus[] = [
+  RideStatus.REQUESTED,
+  RideStatus.ACCEPTED,
+  RideStatus.PICKED_UP,
+  RideStatus.IN_TRANSIT,
+  RideStatus.ARRIVED,
+];
+
+/**
+ * Operational escape hatch: an admin can stop any ride that is not already
+ * terminal. This releases the rider and the driver's active-ride lock, which
+ * is the recovery path for a suspended/abandoned driver after pickup.
+ */
+const adminCancelRide = async (
+  rideId: string,
+  adminId: string,
+  reason: string,
+) => {
+  return withTransaction(async (session) => {
+    const ride = await Ride.findOneAndUpdate(
+      {
+        _id: rideId,
+        status: { $in: ADMIN_CANCELLABLE_STATUSES },
+      },
+      {
+        $set: {
+          status: RideStatus.CANCELLED,
+          cancelReason: RideCancelReason.BY_ADMIN,
+          cancelNote: reason,
+          cancelledBy: adminId,
+          "timestamps.cancelledAt": new Date(),
+        },
+      },
+      { returnDocument: "after", session },
+    );
+
+    if (!ride) {
+      await explainAdminCancelBlock(rideId, session);
+      throw new AppError(
+        httpStatus.BAD_REQUEST,
+        "Ride cannot be cancelled.",
+      );
+    }
+
+    await User.updateOne(
+      {
+        _id: ride.riderId,
+        riderStatus: { $in: [RiderStatus.REQUESTED, RiderStatus.ON_RIDE] },
+      },
+      { $set: { riderStatus: RiderStatus.IDLE } },
+      { session },
+    );
+
+    if (ride.driverId) {
+      await Driver.updateOne(
+        { _id: ride.driverId, activeRideId: ride._id },
+        { $set: { activeRideId: null } },
+        { session },
+      );
+    }
+
+    return ride;
+  });
+};
+
+const explainAdminCancelBlock = async (
+  rideId: string,
+  session: ClientSession,
+): Promise<never> => {
+  const existing = await Ride.findById(rideId).session(session);
+
+  if (!existing) {
+    throw new AppError(httpStatus.NOT_FOUND, "Ride not found");
+  }
+
+  if (
+    existing.status === RideStatus.COMPLETED ||
+    existing.status === RideStatus.CANCELLED ||
+    existing.status === RideStatus.REJECTED
+  ) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      `Ride is already ${existing.status} and cannot be cancelled.`,
+    );
+  }
+
+  throw new AppError(
+    httpStatus.BAD_REQUEST,
+    `Ride cannot be cancelled in ${existing.status} state.`,
+  );
+};
+
 const singleRide = async (rideId: string, riderId: string) => {
   const data = await Ride.findById(rideId).populate({
     path: "driverId",
-    populate: { path: "user" },
+    select: "vehicleInfo",
+    populate: { path: "user", select: "name contactNo" },
   });
 
   if (!data) {
@@ -242,6 +422,7 @@ const allRides = async (riderId: string, query: Record<string, string>) => {
     .sort()
     .fields()
     .dateSearch()
+    .fareRange()
     .paginate();
 
   const [data, meta] = await Promise.all([
@@ -299,8 +480,9 @@ interface AdminRideRow {
  * resolved in the database through $lookup stages — no full collection scan in
  * JavaScript, and the pagination meta always matches the filtered total. */
 const getAllRidesForAdmin = async (query: Record<string, string>) => {
-  const page = Number(query.page) || 1;
-  const limit = Number(query.limit) || 10;
+  const page = Math.max(1, Number(query.page) || 1);
+  const requestedLimit = Number(query.limit) || 10;
+  const limit = Math.min(Math.max(requestedLimit, 1), MAX_LIMIT);
   const skip = (page - 1) * limit;
 
   const matchStage: Record<string, unknown> = {};
@@ -470,6 +652,7 @@ export const RideServices = {
   singleRide,
   allRides,
   cancelRide,
+  adminCancelRide,
   riderHistory,
   getSingleRideForAdmin,
   getAllRidesForAdmin,

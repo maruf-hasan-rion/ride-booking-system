@@ -22,7 +22,10 @@ export const createRideRequest = catchAsync(
       },
     };
 
-    const ride = await RideServices.requestRide(payload);
+    const ride = await RideServices.requestRide(
+      payload,
+      req.get("Idempotency-Key"),
+    );
 
     sendResponse(res, {
       success: true,
@@ -147,6 +150,25 @@ const getAllRidesForAdmin = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+const adminCancelRide = catchAsync(async (req: Request, res: Response) => {
+  const rideId = req.params.id;
+  const admin = req.user as JwtPayload;
+  const reason = req.body.reason as string;
+
+  const ride = await RideServices.adminCancelRide(
+    rideId,
+    admin.userId,
+    reason,
+  );
+
+  sendResponse(res, {
+    success: true,
+    statusCode: httpStatus.OK,
+    message: "Ride Cancelled By Admin",
+    data: ride,
+  });
+});
+
 export const rideControllers = {
   createRideRequest,
   cancelRideRequest,
@@ -156,4 +178,5 @@ export const rideControllers = {
   myRideHistory,
   getSingleRideForAdmin,
   getAllRidesForAdmin,
+  adminCancelRide,
 };

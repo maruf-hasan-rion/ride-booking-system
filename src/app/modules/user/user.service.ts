@@ -40,7 +40,9 @@ const createUser = async (payload: Partial<IUser>) => {
     ...rest,
   });
 
-  return user;
+  const safeUser = user.toObject();
+  delete safeUser.password;
+  return safeUser;
 };
 
 const updateUser = async (
@@ -173,7 +175,47 @@ const getMe = async (id: string) => {
   };
 };
 
-export const blockUser = async (id: string) => {
+const assertCanManageAccountStatus = async (
+  id: string,
+  requester: JwtPayload,
+) => {
+  if (String(requester.userId) === id) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "You cannot change your own block status.",
+    );
+  }
+
+  const target = await User.findById(id).select("role");
+  if (!target) {
+    throw new AppError(httpStatus.NOT_FOUND, "User Not Found");
+  }
+
+  const requesterRole = requester.role as Role | undefined;
+
+  if (
+    target.role === Role.SUPER_ADMIN &&
+    requesterRole !== Role.SUPER_ADMIN
+  ) {
+    throw new AppError(
+      httpStatus.FORBIDDEN,
+      "Only a super admin can change a super admin account.",
+    );
+  }
+
+  if (target.role === Role.ADMIN && requesterRole !== Role.SUPER_ADMIN) {
+    throw new AppError(
+      httpStatus.FORBIDDEN,
+      "Only a super admin can change an admin account.",
+    );
+  }
+
+  return target;
+};
+
+export const blockUser = async (id: string, requester: JwtPayload) => {
+  await assertCanManageAccountStatus(id, requester);
+
   const user = await User.findByIdAndUpdate(
     id,
     { isBlocked: true, status: AccountStatus.BLOCKED },
@@ -185,7 +227,9 @@ export const blockUser = async (id: string) => {
   return user;
 };
 
-export const unblockUser = async (id: string) => {
+export const unblockUser = async (id: string, requester: JwtPayload) => {
+  await assertCanManageAccountStatus(id, requester);
+
   const user = await User.findByIdAndUpdate(
     id,
     { isBlocked: false, status: AccountStatus.ACTIVE },

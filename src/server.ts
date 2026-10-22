@@ -23,9 +23,16 @@ const startServer = async () => {
 };
 
 (async () => {
-  await connectRedis();
   await startServer();
   await seedSuperAdmin();
+  // Optional dependency: the API must be able to serve non-OTP traffic even
+  // when Redis is absent or unreachable.
+  void connectRedis().catch((error) => {
+    console.log(
+      "Redis connection failed. OTP storage is unavailable until it recovers.",
+      error,
+    );
+  });
 })();
 
 process.on("SIGTERM", () => {

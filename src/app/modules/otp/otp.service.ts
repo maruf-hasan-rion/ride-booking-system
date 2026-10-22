@@ -15,6 +15,13 @@ const generateOtp = (length = 6) => {
 };
 
 const sendOTP = async (email: string, name: string) => {
+  if (!redisClient.isReady) {
+    throw new AppError(
+      503,
+      "OTP service is temporarily unavailable. Please try again later.",
+    );
+  }
+
   const user = await User.findOne({ email });
 
   if (!user) {
@@ -47,6 +54,13 @@ const sendOTP = async (email: string, name: string) => {
 };
 
 const verifyOTP = async (email: string, otp: string) => {
+  if (!redisClient.isReady) {
+    throw new AppError(
+      503,
+      "OTP service is temporarily unavailable. Please try again later.",
+    );
+  }
+
   // const user = await User.findOne({ email, isVerified: false })
   const user = await User.findOne({ email });
 

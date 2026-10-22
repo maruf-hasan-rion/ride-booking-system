@@ -1,5 +1,5 @@
 import { Schema, model, models } from "mongoose";
-import { IRide, RideStatus } from "./ride.interface";
+import { IRide, RideCancelReason, RideStatus } from "./ride.interface";
 
 const geoPointSchema = {
   type: {
@@ -35,7 +35,19 @@ const rideSchema = new Schema<IRide>(
     },
     cancelReason: {
       type: String,
-      enum: ["BY_RIDER", "NO_DRIVER"],
+      enum: Object.values(RideCancelReason),
+    },
+    cancelNote: {
+      type: String,
+      maxlength: 300,
+    },
+    cancelledBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+    },
+    idempotencyKey: {
+      type: String,
+      maxlength: 100,
     },
     timestamps: {
       requestedAt: { type: Date, default: Date.now },
@@ -66,6 +78,9 @@ rideSchema.index({ riderId: 1, status: 1, createdAt: -1 });
 
 // Driver lookups: active ride + paginated earnings/history.
 rideSchema.index({ driverId: 1, status: 1, createdAt: -1 });
+
+// Idempotent booking: a client retry with the same key returns the same ride.
+rideSchema.index({ idempotencyKey: 1 }, { unique: true, sparse: true });
 
 // Geo support for pickup/destination coordinates.
 rideSchema.index({ pickupLocation: "2dsphere" });

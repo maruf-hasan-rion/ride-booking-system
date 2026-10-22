@@ -8,12 +8,11 @@ import AppError from "../src/app/errorHelpers/AppError";
 import { riderAuth } from "./helpers";
 
 /**
- * Fault injection cannot be done against the live OpenRouteService, so this
- * file is the one place where the route provider is mocked: it verifies the
- * booking flow refuses to persist a ride when fare calculation fails.
+ * Fault injection for the fare provider: the booking flow must refuse to
+ * persist a ride when route calculation fails.
  */
-vi.mock("../src/app/utils/fareCalculator", () => ({
-  fareCalulator: vi.fn(async () => {
+vi.mock("../src/app/utils/fareProvider", () => ({
+  calculateFare: vi.fn(async () => {
     throw new AppError(
       503,
       "Route distance service is unavailable. Please try again shortly.",

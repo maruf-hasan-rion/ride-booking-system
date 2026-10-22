@@ -1,24 +1,27 @@
 import request from "supertest";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import mongoose, { Types } from "mongoose";
 import { MongoMemoryReplSet } from "mongodb-memory-server";
 import app from "../src/app";
+import { Driver } from "../src/app/modules/driver/driver.model";
 import { Ride } from "../src/app/modules/ride/ride.model";
 import { RideStatus } from "../src/app/modules/ride/ride.interface";
+import { RiderStatus } from "../src/app/modules/user/user.interface";
+import { User } from "../src/app/modules/user/user.model";
 import {
+  PASSWORD,
   approvedDriverAuth,
   bookRide,
   riderAuth,
 } from "./helpers";
 
-// The suite calls the real OpenRouteService (your .env ORS_API_KEY) for road
-// distance, exactly like production — no fare mocks in this file. Fault
-// injection lives in tests/fare-failure.test.ts.
-if (!process.env.ORS_API_KEY) {
-  throw new Error(
-    "tests/ride-lifecycle.test.ts needs a real ORS_API_KEY in .env to run.",
-  );
-}
+// The lifecycle suite must be deterministic and provider-independent. The
+// fake returns a 5.2 km road trip, so fare assertions stay meaningful without
+// requiring network access. The opt-in live-ORS smoke test lives in
+// tests/live-ors.test.ts.
+vi.mock("../src/app/utils/fareProvider", () => ({
+  calculateFare: vi.fn(async () => ({ distanceKm: 5.2, fare: 520 })),
+}));
 
 // Replica set (not standalone) so transactions behave like real MongoDB.
 let replSet: MongoMemoryReplSet;
@@ -41,6 +44,9 @@ beforeAll(async () => {
       }
     }),
   );
+
+  // Build the unique indexes used by idempotency and driver-profile claims.
+  await Promise.all([User.init(), Driver.init(), Ride.init()]);
 }, 180000);
 
 afterEach(async () => {
@@ -76,6 +82,36 @@ const cancelRide = (token: string, rideId: string) =>
     .patch(`/api/v1/ride/cancel/${rideId}`)
     .set("Authorization", bearer(token))
     .send();
+
+const cancelDriverRide = (
+  token: string,
+  rideId: string,
+  reason = "Driver cancelled before pickup",
+) =>
+  request(app)
+    .patch(`/api/v1/driver/${rideId}/cancel`)
+    .set("Authorization", bearer(token))
+    .send({ reason });
+
+const adminCancelRide = (
+  token: string,
+  rideId: string,
+  reason = "Admin intervention",
+) =>
+  request(app)
+    .patch(`/api/v1/ride/admin-cancel/${rideId}`)
+    .set("Authorization", bearer(token))
+    .send({ reason });
+
+const bookRideWithKey = (token: string, idempotencyKey: string) =>
+  request(app)
+    .post("/api/v1/ride/request")
+    .set("Authorization", bearer(token))
+    .set("Idempotency-Key", idempotencyKey)
+    .send({
+      pickupLocation: { type: "Point", coordinates: [90.4051, 23.7509] },
+      destination: { type: "Point", coordinates: [90.4244, 23.7806] },
+    });
 
 const rejectRide_ = (token: string, rideId: string) =>
   request(app)
@@ -429,7 +465,14 @@ describe("fare and validation", () => {
 describe("authorization and misc", () => {
   it("login works through the real endpoint", async () => {
     const rider = await riderAuth();
-    expect(rider.token).toBeTruthy();
+
+    const res = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ email: rider.user.email, password: PASSWORD });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.data.accessToken).toBeTruthy();
+    expect(res.body.data.user.password).toBeUndefined();
   });
 
   it("rejects unauthenticated ride requests", async () => {
@@ -457,5 +500,116 @@ describe("authorization and misc", () => {
     expect(rows).toHaveLength(1);
     expect(res.body.data.meta.total).toBe(1);
     expect(rows[0].riderId.name).toBeDefined();
+  });
+});
+
+describe("cancellation and intervention", () => {
+  it("lets the assigned driver cancel before pickup and frees both parties", async () => {
+    const rider = await riderAuth();
+    const driver = await approvedDriverAuth();
+    const rideId = (await bookRide(rider.token)).body.data._id as string;
+
+    expect((await accept(driver.token, rideId)).status).toBe(200);
+
+    const res = await cancelDriverRide(driver.token, rideId, "Rider no-show");
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.data.status).toBe(RideStatus.CANCELLED);
+    expect(res.body.data.cancelReason).toBe("BY_DRIVER");
+
+    const storedRider = await User.findById(rider.user._id);
+    expect(storedRider?.riderStatus).toBe(RiderStatus.IDLE);
+
+    const profile = await Driver.findById(driver.profileId);
+    expect(profile?.activeRideId).toBeNull();
+
+    // The rider and driver are both available again.
+    const secondId = (await bookRide(rider.token)).body.data._id as string;
+    const acceptedAgain = await accept(driver.token, secondId);
+    expect(acceptedAgain.status, JSON.stringify(acceptedAgain.body)).toBe(200);
+  });
+
+  it("refuses driver cancellation after pickup", async () => {
+    const rider = await riderAuth();
+    const driver = await approvedDriverAuth();
+    const rideId = (await bookRide(rider.token)).body.data._id as string;
+
+    await accept(driver.token, rideId);
+    await advance(driver.token, rideId, RideStatus.PICKED_UP);
+
+    const res = await cancelDriverRide(driver.token, rideId);
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/started/i);
+  });
+
+  it("lets an admin cancel a stuck in-progress ride and refuses a terminal retry", async () => {
+    const rider = await riderAuth();
+    const driver = await approvedDriverAuth();
+    const admin = await riderAuth({ name: "Admin", role: "ADMIN" });
+    const rideId = (await bookRide(rider.token)).body.data._id as string;
+
+    await accept(driver.token, rideId);
+    await advance(driver.token, rideId, RideStatus.PICKED_UP);
+
+    const res = await adminCancelRide(
+      admin.token,
+      rideId,
+      "Driver unresponsive",
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.data.status).toBe(RideStatus.CANCELLED);
+    expect(res.body.data.cancelReason).toBe("BY_ADMIN");
+    expect(res.body.data.cancelNote).toBe("Driver unresponsive");
+
+    const storedRider = await User.findById(rider.user._id);
+    expect(storedRider?.riderStatus).toBe(RiderStatus.IDLE);
+
+    const profile = await Driver.findById(driver.profileId);
+    expect(profile?.activeRideId).toBeNull();
+
+    const retry = await adminCancelRide(admin.token, rideId, "Again");
+    expect(retry.status).toBe(400);
+  });
+});
+
+describe("concurrent driver claims", () => {
+  it("allows only one of two different rides for the same driver", async () => {
+    const riderA = await riderAuth();
+    const riderB = await riderAuth();
+    const driver = await approvedDriverAuth();
+    const rideA = (await bookRide(riderA.token)).body.data._id as string;
+    const rideB = (await bookRide(riderB.token)).body.data._id as string;
+
+    const [first, second] = await Promise.all([
+      accept(driver.token, rideA),
+      accept(driver.token, rideB),
+    ]);
+
+    expect([first.status, second.status].sort()).toEqual([200, 409]);
+
+    const stored = await Ride.find({ driverId: driver.profileId });
+    const accepted = stored.filter(
+      (ride) => ride.status === RideStatus.ACCEPTED,
+    );
+    expect(accepted).toHaveLength(1);
+
+    const profile = await Driver.findById(driver.profileId);
+    expect(profile?.activeRideId?.toString()).toBe(
+      accepted[0]._id.toString(),
+    );
+  });
+});
+
+describe("idempotent booking", () => {
+  it("returns the same ride when the same key is retried", async () => {
+    const rider = await riderAuth();
+    const key = `key-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    const first = await bookRideWithKey(rider.token, key);
+    const second = await bookRideWithKey(rider.token, key);
+
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
+    expect(second.status, JSON.stringify(second.body)).toBe(201);
+    expect(second.body.data._id).toBe(first.body.data._id);
+    expect(await Ride.countDocuments({ idempotencyKey: key })).toBe(1);
   });
 });
