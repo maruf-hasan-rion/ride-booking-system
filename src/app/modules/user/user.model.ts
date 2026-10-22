@@ -1,4 +1,4 @@
-import { model, Schema } from "mongoose";
+import { model, models, Schema } from "mongoose";
 import {
   AccountStatus,
   IAuthProvider,
@@ -48,6 +48,7 @@ const userSchema = new Schema<IUser>(
   },
 );
 
-export const User = model<IUser>("User", userSchema);
+/** Guarded so module re-imports never recompile a registered model. */
+export const User = models.User ?? model<IUser>("User", userSchema);
 
 

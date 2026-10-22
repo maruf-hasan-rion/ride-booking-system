@@ -1,4 +1,4 @@
-import { Schema, model } from "mongoose";
+import { Schema, model, models } from "mongoose";
 import { IRide, RideStatus } from "./ride.interface";
 
 const geoPointSchema = {
@@ -71,4 +71,5 @@ rideSchema.index({ driverId: 1, status: 1, createdAt: -1 });
 rideSchema.index({ pickupLocation: "2dsphere" });
 rideSchema.index({ destination: "2dsphere" });
 
-export const Ride = model<IRide>("Ride", rideSchema);
+/** Guarded so module re-imports never recompile a registered model. */
+export const Ride = models.Ride ?? model<IRide>("Ride", rideSchema);

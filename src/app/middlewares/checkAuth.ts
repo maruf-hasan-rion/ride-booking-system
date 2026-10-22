@@ -3,7 +3,7 @@ import httpStatus from "http-status-codes";
 import { JwtPayload } from "jsonwebtoken";
 import { envVars } from "../config/env";
 import AppError from "../errorHelpers/AppError";
-import { AccountStatus } from "../modules/user/user.interface";
+import { AccountStatus, IAuthProvider } from "../modules/user/user.interface";
 import { User } from "../modules/user/user.model";
 import { verifyToken } from "../utils/jwt";
 
@@ -36,7 +36,8 @@ export const checkAuth =
       }
 
       const isSocialAuthUser = isUserExist.auths?.some(
-        (providerObject) => providerObject.provider === "google"
+        (providerObject: IAuthProvider) =>
+          providerObject.provider === "google"
       );
       const canReadRestrictedAccountState =
         authRoles.length === 0 &&

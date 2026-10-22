@@ -1,4 +1,4 @@
-import { Schema, model } from "mongoose";
+import { Schema, model, models } from "mongoose";
 import { IDriver } from "./driver.interface";
 
 const driverSchema = new Schema<IDriver>(
@@ -19,4 +19,6 @@ const driverSchema = new Schema<IDriver>(
   }
 );
 
-export const Driver = model<IDriver>("Driver", driverSchema);
+/** Guarded so module re-imports (single-fork test runners, hot reloads)
+ * never try to recompile an already-registered model. */
+export const Driver = models.Driver ?? model<IDriver>("Driver", driverSchema);

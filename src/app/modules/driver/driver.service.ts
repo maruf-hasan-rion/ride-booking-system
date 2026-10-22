@@ -297,7 +297,9 @@ const explainAcceptBlock = async (
     );
   }
   if (
-    existing.rejectedBy.some((id) => id.toString() === driverId)
+    existing.rejectedBy.some(
+      (id: Types.ObjectId) => id.toString() === driverId,
+    )
   ) {
     throw new AppError(
       httpStatus.BAD_REQUEST,

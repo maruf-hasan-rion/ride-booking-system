@@ -7,7 +7,7 @@ import {
   VerifyCallback,
 } from "passport-google-oauth20";
 import { Strategy as LocalStrategy } from "passport-local";
-import { AccountStatus } from "../modules/user/user.interface";
+import { AccountStatus, IAuthProvider } from "../modules/user/user.interface";
 import { User } from "../modules/user/user.model";
 import { envVars } from "./env";
 
@@ -39,7 +39,8 @@ passport.use(
         }
 
         const isGoogleAuthenticated = isUserExist.auths.some(
-          (providerObjects) => providerObjects.provider == "google"
+          (providerObjects: IAuthProvider) =>
+            providerObjects.provider == "google",
         );
 
         if (isGoogleAuthenticated && !isUserExist.password) {
@@ -114,7 +115,8 @@ passport.use(
           });
         } else {
           const hasGoogleProvider = user.auths.some(
-            (providerObjects) => providerObjects.provider === "google"
+            (providerObjects: IAuthProvider) =>
+              providerObjects.provider === "google",
           );
 
           let shouldSave = false;
