@@ -1,204 +1,93 @@
-# 🚖 Ride Booking System Backend
+# GoMove — Backend API
 
-A secure, scalable, and role-based backend API for a **Ride Booking Platform** (like Uber, Pathao) built with **Node.js**, **Express**, and **MongoDB**.
+Ride-booking backend (rider → driver → admin) built with Express 5, TypeScript, MongoDB via Mongoose 9, and Zod validation. Runs on Vercel in production and connects to a MongoDB Atlas cluster.
 
-Supports multiple user roles (**Rider**, **Driver**, **Admin**) with JWT authentication and role-based access control.
+## What actually works (verified)
 
----
+- **Roles:** Rider · Driver · Admin · Super Admin (seeded from env at first boot, idempotent).
+- **Auth:** email+password (Passport Local) issuing JWT access+refresh tokens in httpOnly cookies *and* response body; `POST /auth/refresh-token` exchange; Google OAuth routes (deployed-environment feature). Blocked/suspended accounts are refused at the auth middleware level.
+- **Ride lifecycle (conflict-safe):** riders book pickup/destination with server-computed road fare (OpenRouteService directions, 100 BDT/km). Drivers view pending requests, accept atomically (`concurrent accepts → one winner + 409`), reject without stealing the ride (ride stays pending for others and the rejecting driver is excluded), and advance `ACCEPTED → PICKED_UP → IN_TRANSIT → ARRIVED → COMPLETED` (skip/repeat → 400/409). Rider cancellation is allowed **until pickup** (`REQUESTED`/`ACCEPTED`), and unaccepted requests expire after **15 minutes** (`cancelReason: NO_DRIVER`) releasing the rider to book again.
+- **Stats:** admin system stats, driver earnings (daily/weekly/monthly) and rider report — earned amounts are derived from collected fares (there is no payments module yet; the split convention exists as `driverIncome = fare`).
+- **Reliability:** request bodies validated with Zod (auth, OTP, rides, profiles); login/OTP/ride-request rate limiters; helmet; consistent error envelope (`success/message/errorSources`); unconditional 5xx never leak `stack` in production.
+- **Testing:** Vitest + `mongodb-memory-server` replica set with **real OpenRouteService** calls — 21 tests covering the whole state machine, both races, ownership/authorization, expiry and validation. `npm test`.
 
-## 📖 Overview
+## Requirements
 
-### Key Features
+- Node.js ≥ 20.19
+- npm
+- MongoDB connection string (Atlas or local replica set for transactions)
+- (optional) Redis + SMTP for OTP emails, Google credentials for OAuth, an OpenRouteService key — the booking flow requires ORS; everything else degrades gracefully.
 
-- **Riders**
-
-  - Request a ride with pickup & destination
-  - Cancel a ride within allowed window
-  - View ride history
-
-- **Drivers**
-
-  - Accept or reject ride requests
-  - Update ride status (`picked_up` → `in_transit` → `completed`)
-  - View earnings history
-  - Online/offline availability
-
-- **Admins**
-
-  - View all users, drivers, and rides
-  - Approve or suspend drivers
-  - Block or unblock users
-  - View system statistics
-
-- **System**
-  - Role-based authorization
-  - Complete ride history stored
-  - Automatic fare calculation
-
----
-
-## ⚙️ Setup & Installation
-
-### 1. Prerequisites
-
-- [Node.js](https://nodejs.org/) v18+
-- [MongoDB](https://www.mongodb.com/) (local or cloud)
-- [Postman](https://www.postman.com/) (for API testing)
-
----
-
-### 2. Clone the Repository
-
-```bash
-git clone https://github.com/maruf-hasan-rion/ride-booking-system.git
-cd ride-booking-system
-```
-
----
-
-### 3. Install Dependencies
+## Local setup
 
 ```bash
 npm install
+npm run seed      # creates admin/rider/driver demo accounts + sample rides through REAL service flows
+npm run dev       # starts on http://localhost:5000
 ```
 
----
+.env.example documents every variable; copy it to `.env` and fill values (real credentials stay local, never committed).
 
-### 4. Configure Environment Variables
+### Scripts
 
-Create a `.env` file in the project root and add:
+| Command | Purpose |
+|---|---|
+| `npm run dev` | `ts-node-dev` watch mode |
+| `npm run build` | `tsc` → `dist/` |
+| `npm start` | run built server (Vercel target) |
+| `npm test` | Vitest suite (real ORS, in-memory Mongo) |
+| `npm run seed` | idempotent seed via service layer (admin/rider/driver + completed/cancelled rides) |
+| `npm run lint` | eslint over `src` |
 
-```env
-PORT=
-DB_URL=
-NODE_ENV=
+## API (base `/api/v1`)
 
-# JWT
-JWT_ACCESS_SECRET=
-JWT_ACCESS_EXPIRES=
-JWT_REFRESH_SECRET=
-JWT_REFRESH_EXPIRES=
+| Group | Route | Role(s) | Notes |
+|---|---|---|---|
+| auth | `POST /auth/login`, `/logout`, `/refresh-token`, `/change-password` | any | Zod-validated; rate-limited login |
+| auth | `GET /auth/google`, `/auth/google/callback` | — | deployed OAuth only |
+| otp | `POST /otp/send`, `/otp/verify` | — | Redis TTL 2 min, throttled |
+| user | `POST /user/register`, `GET /user/me`, `PATCH /user/:id` | public/self | one-time role choice (RIDER/DRIVER) |
+| user | `GET /user`, `PATCH /user/block/:id`, `/unblock/:id` | admin+ | paginated, filtered |
+| ride | `POST /ride/request` | rider | server computes distance+fare |
+| ride | `GET /ride/latest-ride`, `/my-ride/:id`, `/all-my-rides`, `/me` | rider | status tracking/history |
+| ride | `PATCH /ride/cancel/:id` | rider | until pickup (`BY_RIDER`) |
+| ride | `GET /ride/single-ride/:id`, `/all-rides-admin` | admin | db-level pagination/search |
+| driver | `POST/PATCH /driver/profile`, `GET /driver/profile/me` | driver | vehicle info gate |
+| driver | `PATCH /driver/status` | driver | online toggle (needs approval) |
+| driver | `GET /driver/incoming-requests`, `/driver/active-ride` | driver | live queue + own active ride |
+| driver | `PATCH /driver/:id/accept`, `/:id/reject`, `/:id/status` | driver | atomic claims + transition map |
+| driver | `GET /driver/earnings/me` | driver | completed fares |
+| stats | `GET /stats/earning-history` | admin | rides + earned money (fare-derived) |
+| stats | `GET /stats/my-earning-history`, `/my-all-ride-history` | driver/rider | scoped reports |
 
-# BCRYPT
-BCRYPT_SALT_ROUND=
-
-# SUPER ADMIN
-SUPER_ADMIN_EMAIL=
-SUPER_ADMIN_PASSWORD=
-
-# Google
-GOOGLE_CLIENT_SECRET=
-GOOGLE_CLIENT_ID=
-GOOGLE_CALLBACK_URL=
-
-# Express Session
-EXPRESS_SESSION_SECRET=
-
-# Frontend URL
-FRONTEND_URL=http://localhost:5173
-```
-
----
-
-### 5. Start the Development Server
-
-```bash
-npm run dev
-```
-
-Server runs at:
+## Ride state machine
 
 ```
-http://localhost:5000
+REQUESTED ──accept──> ACCEPTED ──> PICKED_UP ──> IN_TRANSIT ──> ARRIVED ──> COMPLETED
+    │  cancel (rider, until pickup)                         (no moves are allowed
+    ├──> CANCELLED  (BY_RIDER)                               out of terminal states)
+    └──(15 min TTL, no driver)──> CANCELLED (NO_DRIVER)
+REJECTED rides keep status REQUESTED; the rejecting driver is excluded only.
 ```
 
----
+## Structure
 
-## 📌 API Endpoints Summary
-
-### 🔹 Auth (`/api/v1/auth`)
-
-| Method | Endpoint | Description | Auth Required |
-| ------ | -------- | ----------- | ------------- |
-| POST   | `/login` | Login user  | ❌            |
-
----
-
-### 🔹 ride (`/api/v1/ride`)
-
-| Method | Endpoint      | Description       | Role  |
-| ------ | ------------- | ----------------- | ----- |
-| POST   | `/request`    | Request a ride    | Rider |
-| PATCH  | `/:id/cancel` | Cancel ride       | Rider |
-| GET    | `/me`         | View ride history | Rider |
-| GET    | `/`           | List all rides    | Admin |
-
----
-
-### 🔹 User (default:Rider) (`/api/v1/user`)
-
-| Method | Endpoint       | Description       | Role  |
-| ------ | -------------- | ----------------- | ----- |
-| POST   | `/register`    | Register new user | Any   |
-| GET    | `/`            | List all users    | Admin |
-| PATCH  | `/block/:id`   | Block user        | Admin |
-| PATCH  | `/unblock/:id` | Unblock user      | Admin |
-
----
-
-### 🔹 Driver (`/api/v1/driver`)
-
-| Method | Endpoint       | Description           | Role   |
-| ------ | -------------- | --------------------- | ------ |
-| POST   | `/profile`     | Create driver profile | Driver |
-| PATCH  | `/status`      | Update availability   | Driver |
-| PATCH  | `/:id/accept`  | Accept ride request   | Driver |
-| PATCH  | `/:id/reject`  | Reject ride request   | Driver |
-| PATCH  | `/:id/status`  | Update ride status    | Driver |
-| GET    | `/earnings/me` | View earnings history | Driver |
-| GET    | `/`            | List all drivers      | Admin  |
-| PATCH  | `/approve/:id` | Approve driver        | Admin  |
-| PATCH  | `/suspend/:id` | Suspend driver        | Admin  |
-
----
-
-### 🔹 Admin (`/api/v1/admin`)
-
-| Method | Endpoint | Description       | Role  |
-| ------ | -------- | ----------------- | ----- |
-| GET    | `/stats` | View system stats | Admin |
-
----
-
-## 📂 Project Structure
-
-```
+```text
 src/
   app/
+    config/          env, passport, redis
+    middlewares/     checkAuth (JWT+roles), validateRequest (Zod), rateLimiter,
+                     globalErrorHandler, notFound
     modules/
-      user/
-      driver/
-      ride/
-      admin/
-      auth/
-    middlewares/
-    utils/
-  app.ts
-  server.ts
+      ride/          constants, model, validation, service, controller, route
+      driver/ driver authoring, gating, ride actions
+      user/ admin/ auth/ otp/ stats/
+    validation/      common field schemas shared by modules
+    routes/ index mounts every module under /api/v1
+    utils/           fareCalculator (ORS), QueryBuilder, cookies, tokens, email
+  scripts/           seed.ts (service-level seed)
+  server.ts          connection, super-admin seed, graceful shutdown
+tests/               vitest suites (replica set + real ORS)
 ```
 
----
-
-## 🧪 Testing with Postman
-
-1. Import the provided Postman collection
-2. Follow ride lifecycle:
-   - Rider requests ride
-   - Driver accepts & completes ride
-   - Earnings and history available
-
----
-
-## Author
-
-**Maruf Hasan Rion** – [.vercel.app](https://ride-booking-system-kappa.vercel.app)
+Known limitations: no payments module (fares settle off-platform), no websockets (5 s polling), same-driver double-accept across two different rides is best-effort guarded. See `../DEPLOYMENT.md` for deployment details and `../ENGINEERING_DECISIONS.md` for the reasoning behind these gloves-off choices.
