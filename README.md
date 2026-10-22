@@ -96,4 +96,4 @@ src/
 tests/               vitest suites (replica set + deterministic fare provider; live ORS opt-in)
 ```
 
-Known limitations: no payments module (fares settle off-platform), no websockets (5 s polling), no cancellation fees, driver cancellation is pre-pickup only, and completion evidence is status/timestamp-based (no location or duration proof). Admin cancellation is the operational recovery path for stuck rides. See `../DEPLOYMENT.md` for deployment details and `../ENGINEERING_DECISIONS.md` for the reasoning behind these gloves-off choices.
+Known limitations: no payments module (fares settle off-platform), no websockets (5 s polling), no cancellation fees, driver cancellation is pre-pickup only, and completion evidence is status/timestamp-based (no location or duration proof). Admin cancellation is the operational recovery path for stuck rides. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for deployment details and [docs/ENGINEERING_DECISIONS.md](docs/ENGINEERING_DECISIONS.md) for the reasoning behind these gloves-off choices. The independent audit is [docs/AUDIT.md](docs/AUDIT.md).
