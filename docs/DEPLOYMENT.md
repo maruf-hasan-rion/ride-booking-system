@@ -62,3 +62,11 @@ Status as of this phase. Verification is recorded; anything marked "owner action
 - `Driver.totalEarnings` remains unused (stats derive earnings from fares) — remove or implement with a payments module later.
 - MongoDB indexes for `Driver.user` (unique) and `Ride.idempotencyKey` (unique sparse) must build successfully on deploy; check for pre-existing duplicates before the first rollout.
 - Mongo EOL note: Mongoose 8.x support ended Feb 2026; we are on Mongoose 9 now.
+
+## 6. Production deployment record (2026-10-23)
+
+- Backend: `https://ride-booking-system-kappa.vercel.app/` — deployment Ready, `GET /` returns 200, `NODE_ENV=production`, `ORS_API_KEY` present.
+- Frontend: `https://ride-booking-frontend-drab.vercel.app/` — deployment Ready, production bundle contains `https://ride-booking-system-kappa.vercel.app/api/v1`.
+- CORS preflight from the frontend origin returns `Access-Control-Allow-Origin: https://ride-booking-frontend-drab.vercel.app` and `Access-Control-Allow-Credentials: true`.
+- Invalid login returns 401 with `err`/`stack` null, confirming production error handling and Atlas connectivity.
+- Remaining owner checks: duplicate `Driver.user` / `Ride.idempotencyKey` queries, a real OTP send, seed-admin rotation, and secret rotation.

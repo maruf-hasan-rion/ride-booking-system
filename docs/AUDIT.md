@@ -991,14 +991,14 @@ These cannot be answered reliably from the source in this session:
 - Frontend `npm run build`: pass (967.33 kB main chunk warning; existing Zod comment warnings).
 - Frontend `npm run lint`: 0 errors, 2 upstream shadcn warnings.
 - Frontend `npx vitest run`: 28/28 pass.
-- CI workflow files added in both repos and verified green on GitHub: backend `backend-ci` (run 39824272386) and frontend `frontend-ci` (run 39886783568, Node 24). The initial frontend Node 20 run failed because `jsdom` 30 / `undici` 8 require a newer Node; the workflow was moved to Node 24.
-- Commits were created and pushed to `audit/remediation-2026-10`: backend `69eaa37` + `341a22c`; frontend `022381e`, `08fd892`, `51aa882`, `a190e46`, `0b2b57e`. No deploy, seed run, browser E2E, or database migration was performed.
+- CI is green on the feature branches and on `main`: backend `backend-ci` (runs 39824272386 and 39890181987) and frontend `frontend-ci` (runs 39886783568 and 39890182367, Node 24). The initial frontend Node 20 run failed because `jsdom` 30 / `undici` 8 require a newer Node; the workflow was moved to Node 24.
+- The feature branches were fast-forwarded to `main` and pushed. Production was deployed manually with the Vercel CLI: backend `https://ride-booking-system-kappa.vercel.app/` and frontend `https://ride-booking-frontend-drab.vercel.app/`; both deployments are Ready. Added production `ORS_API_KEY` and `VITE_API_URL_PROD`, and corrected backend `NODE_ENV` to `production`. Verified backend `/` 200, invalid login 401 with `err`/`stack` null, CORS allow-origin matching the frontend with credentials, frontend HTML 200, and the production API URL present in the built bundle. No seed run, browser E2E, or database migration was performed.
 
 ### K.3 Remaining owner actions
 
 1. Rotate or delete any deployed `admin@seed.gomove.app` account and any other seed account created with the old published password. The code guard does not remove existing data.
 2. Rotate any secret that may have been committed in Git history (old `.env.dev` risk); the current tree no longer contains it, but history was not inspected in this session.
-3. Verify the Vercel backend build runs `npm run build` and includes `dist/app/utils/templates`; send one real OTP on the deployed environment.
+3. Send one real OTP on the deployed backend to confirm the EJS template bundle works; the Vercel build command is now verified as `npm run build`.
 4. Run `npm run seed` against a temporary/demo database with the new `SEED_PASSWORD`/`SEED_ADMIN_PASSWORD`, then verify one completed and one cancelled ride.
 5. Do a browser pass for the ride-detail pages with the network panel open to confirm one ORS route request per ride (not a loop).
 6. Smoke-test driver cancel (before pickup) and admin cancel (in-progress ride) on the deployed/staging pair; verify the rider can book again and the driver can accept another ride.
