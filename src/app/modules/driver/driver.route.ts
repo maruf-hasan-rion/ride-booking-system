@@ -59,7 +59,6 @@ router.patch(
 router.get("/earnings/me", checkAuth(Role.DRIVER), driverController.myEarnings);
 
 // ADMIN
-router.get("/", checkAuth(Role.ADMIN), driverController.allDrivers);
 router.patch(
   "/approve/:id",
   checkAuth(Role.ADMIN),

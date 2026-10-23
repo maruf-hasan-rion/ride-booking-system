@@ -73,6 +73,23 @@ const getNewAccessToken = catchAsync(
 
 const logout = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
+    const authHeader = req.headers.authorization;
+    const bearerToken = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice("Bearer ".length)
+      : undefined;
+
+    await AuthServices.revokeSessions([
+      {
+        token: req.cookies.refreshToken as string | undefined,
+        secret: envVars.JWT_REFRESH_SECRET,
+      },
+      {
+        token:
+          (req.cookies.accessToken as string | undefined) || bearerToken,
+        secret: envVars.JWT_ACCESS_SECRET,
+      },
+    ]);
+
     clearAuthCookie(res);
 
     sendResponse(res, {

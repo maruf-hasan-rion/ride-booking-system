@@ -4,6 +4,8 @@ import { DriverServices } from "./driver.service";
 import { sendResponse } from "../../utils/sendResponse";
 import httpStatus from "http-status-codes";
 import { JwtPayload } from "jsonwebtoken";
+import { DriverValidations } from "./driver.validation";
+import { toQueryRecord } from "../../utils/normalizeQuery";
 
 const createProfile = catchAsync(async (req: Request, res: Response) => {
   const decodeToken = req.user as JwtPayload;
@@ -49,7 +51,7 @@ const myProfile = catchAsync(async (req: Request, res: Response) => {
     success: true,
     statusCode: httpStatus.OK,
     message: "Driver Profile Retrieved",
-    data: profile,
+    data: profile.data,
   });
 });
 
@@ -76,14 +78,17 @@ const getIncomingRequests = catchAsync(async (req: Request, res: Response) => {
 
   const rides = await DriverServices.getIncomingRequests(
     driverId,
-    req.query as Record<string, string>
+    toQueryRecord(
+      DriverValidations.driverQueueQueryZodSchema.parse(req.query),
+    ),
   );
 
   sendResponse(res, {
     success: true,
     statusCode: httpStatus.OK,
     message: "Incoming ride requests retrieved",
-    data: rides,
+    data: rides.data,
+    meta: rides.meta,
   });
 });
 
@@ -97,7 +102,7 @@ const getActiveRide = catchAsync(async (req: Request, res: Response) => {
     success: true,
     statusCode: httpStatus.OK,
     message: "Active ride retrieved",
-    data: ride,
+    data: ride.data,
   });
 });
 
@@ -180,17 +185,6 @@ const myEarnings = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
-const allDrivers = catchAsync(async (req: Request, res: Response) => {
-  const drivers = await DriverServices.allDrivers();
-
-  sendResponse(res, {
-    success: true,
-    statusCode: httpStatus.OK,
-    message: "All Drivers Retrieved Successfully",
-    data: drivers,
-  });
-});
-
 const approveDriver = catchAsync(async (req: Request, res: Response) => {
   const profile = await DriverServices.approveDriver(req.params.id);
 
@@ -225,7 +219,6 @@ export const driverController = {
   updateRideStatus,
   cancelAssignedRide,
   myEarnings,
-  allDrivers,
   approveDriver,
   suspendDriver,
 };

@@ -42,10 +42,17 @@ const cancelAssignedRideZodSchema = z.object({
   }),
 });
 
+const driverQueueQueryZodSchema = z.object({
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  searchTerm: z.string().trim().max(100).optional(),
+});
+
 export const DriverValidations = {
   createDriverProfileZodSchema,
   updateDriverProfileZodSchema,
   updateDriverStatusZodSchema,
   updateRideStatusZodSchema,
   cancelAssignedRideZodSchema,
+  driverQueueQueryZodSchema,
 };

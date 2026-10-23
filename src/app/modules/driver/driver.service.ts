@@ -658,10 +658,6 @@ const driverStatus = async (userId: string, isOnline: boolean) => {
   throw new AppError(httpStatus.FORBIDDEN, "Driver is not approved.");
 };
 
-const allDrivers = async () => {
-  return Driver.find().populate("user", "name email role");
-};
-
 export const DriverServices = {
   createDriver,
   updateDriverProfile,
@@ -673,7 +669,6 @@ export const DriverServices = {
   cancelAssignedRide,
   updateRideStatus,
   driverEarnings,
-  allDrivers,
   approveDriver,
   suspendDriver,
   driverStatus,

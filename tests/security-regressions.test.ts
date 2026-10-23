@@ -122,7 +122,7 @@ describe("driver queue authorization", () => {
       .query({ limit: 10 });
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    const rows = res.body.data.data as Array<{
+    const rows = res.body.data as Array<{
       riderId: { name?: string; email?: string; contactNo?: string };
       pickupLocation: { coordinates: number[] };
       destination: { coordinates: number[] };
@@ -136,7 +136,7 @@ describe("driver queue authorization", () => {
     expect(profile.isApproved).toBe(true);
   });
 
-  it("caps an oversized queue limit at 50", async () => {
+  it("rejects an oversized queue limit", async () => {
     const rider = await createVerifiedUser({ role: Role.RIDER });
     const driverUser = await createVerifiedUser({ role: Role.DRIVER });
     await Driver.create({
@@ -160,9 +160,8 @@ describe("driver queue authorization", () => {
       .set("Authorization", bearer(tokenFor(driverUser)))
       .query({ limit: 1000 });
 
-    expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body.data.meta.limit).toBe(50);
-    expect(res.body.data.data).toHaveLength(50);
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    expect(res.body.message).toMatch(/too big/i);
   });
 
   it("expires a stale request and releases the rider in one flow", async () => {
@@ -254,7 +253,7 @@ describe("sensitive response fields", () => {
 });
 
 describe("role hierarchy", () => {
-  it("lets SUPER_ADMIN use admin-only ride and driver endpoints", async () => {
+  it("lets SUPER_ADMIN use admin-only endpoints", async () => {
     const superAdmin = await createVerifiedUser({
       role: Role.SUPER_ADMIN,
     });
@@ -263,12 +262,12 @@ describe("role hierarchy", () => {
     const rides = await request(app)
       .get("/api/v1/ride/all-rides-admin")
       .set("Authorization", bearer(token));
-    const drivers = await request(app)
-      .get("/api/v1/driver")
+    const users = await request(app)
+      .get("/api/v1/user")
       .set("Authorization", bearer(token));
 
     expect(rides.status).toBe(200);
-    expect(drivers.status).toBe(200);
+    expect(users.status).toBe(200);
   });
 });
 
@@ -402,7 +401,7 @@ describe("CSRF protection", () => {
 });
 
 describe("query hardening", () => {
-  it("caps page size and escapes hostile sort/date input", async () => {
+  it("rejects out-of-range pagination", async () => {
     const rider = await createVerifiedUser({ role: Role.RIDER });
 
     const res = await request(app)
@@ -411,13 +410,24 @@ describe("query hardening", () => {
       .query({
         limit: 1000,
         page: -1,
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    expect(res.body.message).toMatch(/too big|too small/i);
+  });
+
+  it("escapes hostile sort/date input without a 500", async () => {
+    const rider = await createVerifiedUser({ role: Role.RIDER });
+
+    const res = await request(app)
+      .get("/api/v1/ride/all-my-rides")
+      .set("Authorization", bearer(tokenFor(rider)))
+      .query({
         dateSearch: "(a+)+$",
         sort: "$natural",
       });
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body.data.meta.limit).toBe(50);
-    expect(res.body.data.meta.page).toBe(1);
   });
 
   it("does not allow a rider to override the ownership scope", async () => {
@@ -434,7 +444,7 @@ describe("query hardening", () => {
       .query({ riderId: String(riderB._id) });
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    const rows = res.body.data.data as Array<{ _id: string }>;
+    const rows = res.body.data as Array<{ _id: string }>;
     expect(rows.some((ride) => ride._id === String(rideB._id))).toBe(false);
   });
 
@@ -458,10 +468,10 @@ describe("query hardening", () => {
       .query({ minFare: 500, limit: 10 });
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    const rows = res.body.data.data as Array<{ fare: number }>;
+    const rows = res.body.data as Array<{ fare: number }>;
     expect(rows).toHaveLength(1);
     expect(rows[0].fare).toBe(1000);
-    expect(res.body.data.meta.total).toBe(1);
+    expect(res.body.meta.total).toBe(1);
   });
 });
 
@@ -489,6 +499,84 @@ describe("admin account management", () => {
 
     const adminBlockedBySuper = await block(admin._id, tokenFor(superAdmin));
     expect(adminBlockedBySuper.status).toBe(200);
+  });
+});
+
+describe("admin user pagination", () => {
+  it("filters by role/status at the database and attaches driver approval", async () => {
+    const admin = await createVerifiedUser({ role: Role.ADMIN });
+    const rider = await createVerifiedUser({ role: Role.RIDER });
+    const driverUser = await createVerifiedUser({ role: Role.DRIVER });
+    await Driver.create({
+      user: driverUser._id,
+      vehicleInfo: VEHICLE_INFO,
+      isApproved: false,
+    });
+
+    const token = tokenFor(admin);
+    const pending = await request(app)
+      .get("/api/v1/user")
+      .set("Authorization", bearer(token))
+      .query({ role: "DRIVER", status: "PENDING", page: 1, limit: 10 });
+
+    expect(pending.status, JSON.stringify(pending.body)).toBe(200);
+    expect(Array.isArray(pending.body.data)).toBe(true);
+    expect(pending.body.meta.total).toBe(1);
+    expect(pending.body.data[0].email).toBe(driverUser.email);
+    expect(pending.body.data[0].driverProfile.isApproved).toBe(false);
+
+    const active = await request(app)
+      .get("/api/v1/user")
+      .set("Authorization", bearer(token))
+      .query({ status: "ACTIVE", limit: 50 });
+
+    expect(active.status, JSON.stringify(active.body)).toBe(200);
+    const activeEmails = (active.body.data as Array<{ email: string }>).map(
+      (user) => user.email,
+    );
+    expect(activeEmails).toContain(rider.email);
+    expect(activeEmails).not.toContain(driverUser.email);
+
+    const oversized = await request(app)
+      .get("/api/v1/user")
+      .set("Authorization", bearer(token))
+      .query({ limit: 100 });
+    expect(oversized.status).toBe(400);
+  });
+});
+
+describe("logout revocation", () => {
+  it("invalidates the old access and refresh tokens on logout", async () => {
+    const rider = await createVerifiedUser({ role: Role.RIDER });
+    const login = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ email: rider.email, password: PASSWORD });
+
+    expect(login.status, JSON.stringify(login.body)).toBe(200);
+    const cookies = login.headers["set-cookie"] as unknown as string[];
+    const refreshCookie = cookies.find((cookie) =>
+      cookie.startsWith("refreshToken="),
+    );
+    const accessCookie = cookies.find((cookie) =>
+      cookie.startsWith("accessToken="),
+    );
+
+    const logout = await request(app)
+      .post("/api/v1/auth/logout")
+      .set("Cookie", cookies)
+      .set("X-Requested-With", "XMLHttpRequest");
+    expect(logout.status, JSON.stringify(logout.body)).toBe(200);
+
+    const refresh = await request(app)
+      .post("/api/v1/auth/refresh-token")
+      .set("Cookie", refreshCookie as string)
+      .set("X-Requested-With", "XMLHttpRequest");
+    expect(refresh.status).toBe(401);
+
+    const me = await request(app)
+      .get("/api/v1/user/me")
+      .set("Cookie", accessCookie as string);
+    expect(me.status).toBe(401);
   });
 });
 

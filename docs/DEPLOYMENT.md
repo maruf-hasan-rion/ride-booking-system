@@ -8,11 +8,11 @@ Status as of this phase. Verification is recorded; anything marked "owner action
 |---|---|---|
 | backend | `npm run build` (`tsc`) | ✅ exit 0 |
 | backend | `npm run lint` | ✅ 0 errors, 2 intentional console-logging warnings |
-| backend | `npm test` (vitest) | ✅ 46/46 passed, 1 opt-in live-ORS test skipped (deterministic fare provider + in-memory Mongo replica) |
+| backend | `npm test` (vitest) | ✅ 49 passed, 1 opt-in live-ORS test skipped (deterministic fare provider + in-memory Mongo replica) |
 | backend | `npm run seed` | ✅ compiles; run against an owning database (additive write) |
 | frontend | `npm run build` (`tsc -b && vite build`) | ✅ ~8s |
 | frontend | `npm run lint` | ✅ 0 errors, 2 shadcn upstream warnings |
-| frontend | `npx vitest run` | ✅ 28/28 |
+| frontend | `npx vitest run` | ✅ 29/29 |
 
 ## 2. Runtime configuration matrix
 
@@ -34,7 +34,6 @@ Status as of this phase. Verification is recorded; anything marked "owner action
 | Var | Needed | Notes |
 |---|---|---|
 | VITE_API_URL_PROD | yes | produced build uses it; must equal backend URL incl. `/api/v1` |
-| VITE_ORS_API_KEY | nice-to-have | enables route polyline + live client estimate; ride flow works without (server computes fare) |
 | VITE_ENABLE_DEMO_LOGIN + VITE_DEMO_*_EMAIL/PASSWORD | optional | recruiter demo shortcut; keep empty in a serious deployment |
 
 **Cookies/CORS**: production cookie sets `Secure + SameSite=None` — must be served from HTTPS; CORS allow-list = `FRONTEND_URL` + localhost:5173. Changing the Vercel project names updates both origins — update `FRONTEND_URL` and `VITE_API_URL_PROD` in the same deploy.
@@ -58,9 +57,9 @@ Status as of this phase. Verification is recorded; anything marked "owner action
 - ORS free-tier rate (2 rps) can jitter the opt-in live smoke test; the default suite uses a deterministic fare provider and does not call ORS.
 - Driver claims use the driver document's `activeRideId` lock, so two different rides cannot both be accepted by the same driver; the unique `Driver.user` index blocks duplicate profiles.
 - No cancellation fees exist; a driver may cancel only before pickup, and admin cancellation is the recovery path for stuck rides.
-- Completion is status/timestamp-based (no location or duration proof).
-- `Driver.totalEarnings` remains unused (stats derive earnings from fares) — remove or implement with a payments module later.
-- MongoDB indexes for `Driver.user` (unique) and `Ride.idempotencyKey` (unique sparse) must build successfully on deploy; check for pre-existing duplicates before the first rollout.
+- Completion is status/timestamp-based (no location or duration proof); this is the accepted product policy.
+- The browser no longer calls ORS; `VITE_ORS_API_KEY` was removed and maps show a direct-line preview. The backend ORS key is the only provider credential.
+- MongoDB indexes for `Driver.user` (unique) and `Ride.idempotencyKey` (unique sparse) must build successfully on deploy; check for pre-existing duplicates before the first rollout. The old `pickupLocation_2dsphere`/`destination_2dsphere` indexes are no longer declared; drop them in Atlas if they exist.
 - Mongo EOL note: Mongoose 8.x support ended Feb 2026; we are on Mongoose 9 now.
 
 ## 6. Production deployment record (2026-10-23)

@@ -12,6 +12,7 @@ import {
 } from "./user.interface";
 import { User } from "./user.model";
 import { QueryBuilder } from "../../utils/QueryBuilder";
+import { Driver } from "../driver/driver.model";
 
 const createUser = async (payload: Partial<IUser>) => {
   const { email, password, ...rest } = payload;
@@ -142,9 +143,54 @@ const updateUser = async (
 const userSearchableFields = ["name", "email", "contactNo"];
 
 const getAllUsers = async (query: Record<string, string> = {}) => {
+  const statusFilter = query.status?.trim().toUpperCase();
+  const roleFilter = query.role?.trim().toUpperCase();
+
+  const builderQuery = { ...query };
+  delete builderQuery.status;
+  delete builderQuery.role;
+
+  const baseFilter: Record<string, unknown> = {};
+  if (roleFilter) {
+    baseFilter.role = roleFilter;
+  }
+
+  // Driver approval is a separate document. Resolve the user ids once so the
+  // status filter and the paginated total stay consistent with the UI's
+  // PENDING/ACTIVE labels.
+  let unapprovedDriverUserIds: string[] = [];
+  if (statusFilter === "PENDING" || statusFilter === "ACTIVE") {
+    const ids = await Driver.distinct("user", { isApproved: { $ne: true } });
+    unapprovedDriverUserIds = ids.map(String);
+  }
+
+  if (statusFilter === "PENDING") {
+    if (roleFilter && roleFilter !== Role.DRIVER) {
+      baseFilter._id = { $in: [] };
+    } else {
+      baseFilter.role = Role.DRIVER;
+      baseFilter.status = AccountStatus.ACTIVE;
+      baseFilter.isBlocked = { $ne: true };
+      baseFilter._id = { $in: unapprovedDriverUserIds };
+    }
+  } else if (statusFilter === "ACTIVE") {
+    baseFilter.status = AccountStatus.ACTIVE;
+    baseFilter.isBlocked = { $ne: true };
+    if (unapprovedDriverUserIds.length > 0) {
+      baseFilter._id = { $nin: unapprovedDriverUserIds };
+    }
+  } else if (statusFilter === "BLOCKED") {
+    baseFilter.$or = [
+      { status: AccountStatus.BLOCKED },
+      { isBlocked: true },
+    ];
+  } else if (statusFilter === "SUSPENDED") {
+    baseFilter.status = AccountStatus.SUSPENDED;
+  }
+
   const queryBuilder = new QueryBuilder(
-    User.find({}).select("-password"),
-    query,
+    User.find(baseFilter).select("-password"),
+    builderQuery,
   );
 
   const users = queryBuilder
@@ -153,10 +199,31 @@ const getAllUsers = async (query: Record<string, string> = {}) => {
     .sort()
     .paginate();
 
-  const [data, meta] = await Promise.all([users.build(), queryBuilder.getMeta()]);
+  const [rawData, meta] = await Promise.all([
+    users.build().lean(),
+    queryBuilder.getMeta(),
+  ]);
+
+  const data = rawData as (Record<string, unknown> & { _id: unknown })[];
+
+  const driverProfiles = await Driver.find({
+    user: { $in: data.map((user) => user._id) },
+  })
+    .select("_id user isApproved")
+    .lean();
+
+  const profileByUser = new Map(
+    driverProfiles.map((profile) => [
+      String(profile.user),
+      { _id: String(profile._id), isApproved: Boolean(profile.isApproved) },
+    ]),
+  );
 
   return {
-    data,
+    data: data.map((user) => ({
+      ...user,
+      driverProfile: profileByUser.get(String(user._id)) ?? null,
+    })),
     meta,
   };
 };

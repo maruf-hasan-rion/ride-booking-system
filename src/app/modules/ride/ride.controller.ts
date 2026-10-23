@@ -5,6 +5,8 @@ import httpStatus from "http-status-codes";
 import { sendResponse } from "../../utils/sendResponse";
 import { RideServices } from "./ride.service";
 import { RideStatus } from "./ride.interface";
+import { RideValidations } from "./ride.validation";
+import { toQueryRecord } from "../../utils/normalizeQuery";
 
 export const createRideRequest = catchAsync(
   async (req: Request, res: Response) => {
@@ -46,7 +48,7 @@ const getRequestedRide = catchAsync(async (req: Request, res: Response) => {
     success: true,
     statusCode: httpStatus.OK,
     message: "Rides Made By You are Retrieved!",
-    data: rideInfo,
+    data: rideInfo.data,
   });
 });
 export const cancelRideRequest = catchAsync(
@@ -80,18 +82,18 @@ const getSingleRide = catchAsync(async (req: Request, res: Response) => {
 const getAllRides = catchAsync(async (req: Request, res: Response) => {
   const rider = req.user as JwtPayload;
   const riderId = rider.userId;
-  const query = req.query;
-
-  const rideInfo = await RideServices.allRides(
-    riderId,
-    query as Record<string, string>
+  const query = toQueryRecord(
+    RideValidations.riderRideQueryZodSchema.parse(req.query),
   );
+
+  const rideInfo = await RideServices.allRides(riderId, query);
 
   sendResponse(res, {
     success: true,
     statusCode: httpStatus.OK,
     message: "Rides Made By You are Retrieved!",
-    data: rideInfo,
+    data: rideInfo.data,
+    meta: rideInfo.meta,
   });
 });
 
@@ -137,16 +139,17 @@ const getSingleRideForAdmin = catchAsync(
 );
 
 const getAllRidesForAdmin = catchAsync(async (req: Request, res: Response) => {
-  const query = req.query;
-  const rideInfo = await RideServices.getAllRidesForAdmin(
-    query as Record<string, string>
+  const query = toQueryRecord(
+    RideValidations.adminRideQueryZodSchema.parse(req.query),
   );
+  const rideInfo = await RideServices.getAllRidesForAdmin(query);
 
   sendResponse(res, {
     success: true,
     statusCode: httpStatus.OK,
     message: "All Rides Retrieved For Admin !",
-    data: rideInfo,
+    data: rideInfo.data,
+    meta: rideInfo.meta,
   });
 });
 

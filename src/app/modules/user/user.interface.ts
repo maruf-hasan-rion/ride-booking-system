@@ -15,8 +15,6 @@ export interface IAuthProvider {
 export enum RiderStatus {
   IDLE = "IDLE",
   REQUESTED = "REQUESTED",
-  WAITING = "WAITING",
-  PICKED_UP = "PICKED_UP",
   ON_RIDE = "ON_RIDE",
 }
 
@@ -33,10 +31,6 @@ export interface IUser {
   password?: string;
   contactNo?: string;
   image?: string;
-  location?: {
-    type: "Point";
-    coordinates: [number, number];
-  };
   role?: Role;
   isVerified?: boolean;
   isBlocked?: boolean;

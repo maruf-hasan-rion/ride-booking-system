@@ -82,9 +82,5 @@ rideSchema.index({ driverId: 1, status: 1, createdAt: -1 });
 // Idempotent booking: a client retry with the same key returns the same ride.
 rideSchema.index({ idempotencyKey: 1 }, { unique: true, sparse: true });
 
-// Geo support for pickup/destination coordinates.
-rideSchema.index({ pickupLocation: "2dsphere" });
-rideSchema.index({ destination: "2dsphere" });
-
 /** Guarded so module re-imports never recompile a registered model. */
 export const Ride = models.Ride ?? model<IRide>("Ride", rideSchema);

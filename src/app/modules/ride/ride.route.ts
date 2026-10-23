@@ -33,8 +33,6 @@ router.patch(
 router.get("/me", checkAuth(Role.RIDER), rideControllers.myRideHistory);
 
 // ADMIN
-// router.get("/", checkAuth(Role.ADMIN), rideControllers.allRides);
-
 router.get(
   "/single-ride/:id",
   checkAuth(Role.ADMIN),

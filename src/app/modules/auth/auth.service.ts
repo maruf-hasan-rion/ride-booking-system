@@ -4,10 +4,37 @@ import { JwtPayload } from "jsonwebtoken";
 import { envVars } from "../../config/env";
 import AppError from "../../errorHelpers/AppError";
 import { createNewAccessTokenWithRefreshToken } from "../../utils/userTokens";
+import { verifyToken } from "../../utils/jwt";
 import { User } from "../user/user.model";
 
 const getNewAccessToken = async (refreshToken: string) => {
   return createNewAccessTokenWithRefreshToken(refreshToken);
+};
+
+/**
+ * Logout is intentionally idempotent: expired/invalid tokens are ignored, but
+ * any valid token bumps the user's tokenVersion so the refresh token (and all
+ * other sessions) cannot be replayed.
+ */
+const revokeSessions = async (
+  tokens: { token?: string; secret: string }[],
+) => {
+  for (const { token, secret } of tokens) {
+    if (!token) continue;
+
+    try {
+      const payload = verifyToken(token, secret) as JwtPayload;
+      if (!payload?.email) continue;
+
+      await User.updateOne(
+        { email: payload.email },
+        { $inc: { tokenVersion: 1 } },
+      );
+      return;
+    } catch {
+      // Expired or malformed token: clearing the cookies is sufficient.
+    }
+  }
 };
 
 const changePassword = async (
@@ -40,4 +67,5 @@ const changePassword = async (
 export const AuthServices = {
   getNewAccessToken,
   changePassword,
+  revokeSessions,
 };

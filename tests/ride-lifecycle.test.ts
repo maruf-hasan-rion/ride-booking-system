@@ -409,7 +409,7 @@ describe("expiry", () => {
       .query({ limit: 10 });
 
     expect(listed.status).toBe(200);
-    const listRows = (listed.body.data.data ?? []) as { _id: string }[];
+    const listRows = (listed.body.data ?? []) as { _id: string }[];
     const listedIds = listRows.map((ride) => ride._id);
     expect(listedIds).not.toContain(rideId);
 
@@ -496,9 +496,9 @@ describe("authorization and misc", () => {
       .query({ status: "COMPLETED", page: 1, limit: 5 });
 
     expect(res.status).toBe(200);
-    const rows = (res.body.data.data ?? []) as { riderId: { name?: string } }[];
+    const rows = (res.body.data ?? []) as { riderId: { name?: string } }[];
     expect(rows).toHaveLength(1);
-    expect(res.body.data.meta.total).toBe(1);
+    expect(res.body.meta.total).toBe(1);
     expect(rows[0].riderId.name).toBeDefined();
   });
 });

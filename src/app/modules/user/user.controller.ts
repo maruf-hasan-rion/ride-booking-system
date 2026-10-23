@@ -5,6 +5,7 @@ import httpStatus from "http-status-codes";
 import { catchAsync } from "../../utils/catchAsync";
 import { sendResponse } from "../../utils/sendResponse";
 import { UserServices } from "./user.service";
+import { adminUserQueryZodSchema } from "./user.validation";
 import { JwtPayload } from "jsonwebtoken";
 
 const registerUser = catchAsync(
@@ -41,9 +42,14 @@ const updateUser = catchAsync(
 );
 const getAllUsers = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const users = await UserServices.getAllUsers(
-      req.query as Record<string, string>,
+    const query = adminUserQueryZodSchema.parse(req.query);
+    const normalizedQuery = Object.fromEntries(
+      Object.entries(query)
+        .filter(([, value]) => value !== undefined)
+        .map(([key, value]) => [key, String(value)]),
     );
+
+    const users = await UserServices.getAllUsers(normalizedQuery);
 
     sendResponse(res, {
       success: true,

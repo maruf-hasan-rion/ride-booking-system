@@ -8,8 +8,8 @@ Ride-booking backend (rider → driver → admin) built with Express 5, TypeScri
 - **Auth:** email+password (Passport Local) issuing JWT access+refresh tokens in httpOnly cookies *and* response body; `POST /auth/refresh-token` exchange; Google OAuth routes (deployed-environment feature). Blocked/suspended accounts are refused at the auth middleware level.
 - **Ride lifecycle (conflict-safe):** riders book pickup/destination with server-computed road fare (OpenRouteService directions, 100 BDT/km). Drivers view pending requests, accept atomically (`concurrent accepts → one winner + 409`), reject without stealing the ride (ride stays pending for others and the rejecting driver is excluded), and advance `ACCEPTED → PICKED_UP → IN_TRANSIT → ARRIVED → COMPLETED` (skip/repeat → 400/409). Rider cancellation is allowed **until pickup** (`REQUESTED`/`ACCEPTED`), and unaccepted requests expire after **15 minutes** (`cancelReason: NO_DRIVER`) releasing the rider to book again.
 - **Stats:** admin system stats, driver earnings (daily/weekly/monthly) and rider report — earned amounts are derived from collected fares (there is no payments module yet; the split convention exists as `driverIncome = fare`).
-- **Reliability:** request bodies validated with Zod (auth, OTP, rides, profiles); login/OTP/ride-request/queue rate limiters; helmet; consistent error envelope (`success/message/errorSources`); 5xx responses do not include stack traces in production.
-- **Testing:** Vitest + `mongodb-memory-server` replica set with a deterministic fare provider — the lifecycle, security, and fare-failure suites all run offline. A real-ORS smoke test is opt-in via `RUN_LIVE_ORS=true`. `npm test`.
+- **Reliability:** request bodies and list queries validated with Zod (auth, OTP, rides, profiles, pagination/filters); login/OTP/ride-request/queue rate limiters; helmet; one response envelope (`statusCode/success/message/data/meta?`); 5xx responses do not include stack traces in production. Logout bumps the user's token version, invalidating the old access and refresh tokens.
+- **Testing:** Vitest + `mongodb-memory-server` replica set with a deterministic fare provider — the lifecycle, security, and fare-failure suites all run offline (**49 passed, 1 skipped**). A real-ORS smoke test is opt-in via `RUN_LIVE_ORS=true`. `npm test`.
 
 ## Requirements
 
@@ -45,11 +45,12 @@ CI runs lint, build, and the full offline suite. The live-ORS smoke test is opt-
 
 | Group | Route | Role(s) | Notes |
 |---|---|---|---|
-| auth | `POST /auth/login`, `/logout`, `/refresh-token`, `/change-password` | any | Zod-validated; rate-limited login |
+| auth | `POST /auth/login`, `/logout`, `/refresh-token`, `/change-password` | any | Zod-validated; rate-limited login; logout/change-password revoke old tokens; refresh rotates |
 | auth | `GET /auth/google`, `/auth/google/callback` | — | deployed OAuth only |
 | otp | `POST /otp/send`, `/otp/verify` | — | Redis TTL 2 min, throttled |
 | user | `POST /user/register`, `GET /user/me`, `PATCH /user/:id` | public/self | one-time role choice (RIDER/DRIVER) |
-| user | `GET /user`, `PATCH /user/block/:id`, `/unblock/:id` | admin+ | paginated, filtered |
+| user | `GET /user` | admin+ | server-side pagination/filters (`page`, `limit`, `searchTerm`, `dateSearch`, `role`, `status`), driver approval attached |
+| user | `PATCH /user/block/:id`, `/unblock/:id` | admin+ | role hierarchy enforced; no self-block |
 | ride | `POST /ride/request` | rider | server computes distance+fare; optional `Idempotency-Key` header |
 | ride | `GET /ride/latest-ride`, `/my-ride/:id`, `/all-my-rides`, `/me` | rider | status tracking/history |
 | ride | `PATCH /ride/cancel/:id` | rider | until pickup (`BY_RIDER`) |

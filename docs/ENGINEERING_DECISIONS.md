@@ -17,7 +17,7 @@ Each decision follows the same shape: problem → approach → alternatives → 
 
 **Trade-offs / limitations.** Rapid transactions targeting the same documents can hit a MongoDB write-conflict; lifecycle writes share `withTransaction`, which retries only `TransientTransactionError` and otherwise returns a clean conflict. The same-driver case is serialized through a conditional `Driver.activeRideId` claim: two different rides write the same driver document, so only one claim can commit and the loser receives 409. A legacy active ride without the lock is still caught by the `Ride.exists` fallback.
 
-**Tested.** `tests/ride-lifecycle.test.ts`: `Promise.all` of two accepts → exactly `[200, 409]`; cancel-vs-accept race → one of the pair wins, the other produces the precise conflict; full state walk (skip/repeat rejected), driver of another ride blocked, profile-gate, active-ride guard, same-driver two-ride lock, driver/admin cancellation, idempotent booking. The lifecycle suite runs offline with the deterministic fare provider; the full backend suite is **46/46 passed, 1 live-ORS smoke skipped**.
+**Tested.** `tests/ride-lifecycle.test.ts`: `Promise.all` of two accepts → exactly `[200, 409]`; cancel-vs-accept race → one of the pair wins, the other produces the precise conflict; full state walk (skip/repeat rejected), driver of another ride blocked, profile-gate, active-ride guard, same-driver two-ride lock, driver/admin cancellation, idempotent booking. The lifecycle suite runs offline with the deterministic fare provider; the full backend suite is **49 passed, 1 skipped**.
 
 **Interview Q&A.**
 - *Why not just serializable transactions?* MongoDB provides snapshot isolation with write-conflict retry; conditional filters make correctness local to one document and cheaper than escalations.
@@ -33,7 +33,7 @@ Each decision follows the same shape: problem → approach → alternatives → 
 
 **Alternatives.** Haversine fallback (dishonest: straight line ≠ road); caching provider responses (worthwhile later; adds staleness concerns now). Keeping client-computed fares was rejected categorically: money belongs to the server.
 
-**Trade-offs.** A working ORS key becomes a *functional dependency* for booking (documented; 503 tells the user to retry) versus silent corrupt data.
+**Trade-offs.** A working ORS key becomes a *functional dependency* for booking (documented; 503 tells the user to retry) versus silent corrupt data. The browser no longer calls ORS: `VITE_ORS_API_KEY` was removed, the map shows a direct-line preview, and road distance/fare stay server-side. This removes a public key and a quota-exhaustion path.
 
 **Tested.** `ride-lifecycle.test.ts` uses the deterministic fare provider and asserts `fare = distance × 100`; `tests/live-ors.test.ts` is the opt-in real-provider smoke test. The provider-failure path is isolated in `tests/fare-failure.test.ts` with a throwing provider fake — no ride persists (`count 0`).
 
@@ -79,7 +79,7 @@ Each decision follows the same shape: problem → approach → alternatives → 
 
 **Alternatives.** Leaving per-file improvements (keeps the 1-off bugs — e.g. `MyRideDetails` reading a `vehicle` object shape the backend doesn't store); a full feature-folder refactor (rejecting: violates "no unnecessary architecture").
 
-**Tested.** Best-value unit suites target these exact surfaces: `types/ride.test.ts` (shape derivation, malformed polls), `paths.test.ts` (routing + fallback), `StatusBadge.test.tsx` (token classes, no dark-variant forks), `apiResponse.test.ts` (double envelope), `rideStats.test.ts` (period buckets), `DataStateView.test.tsx` (error/retry). FE suite: **28/28**.
+**Tested.** Best-value unit suites target these exact surfaces: `types/ride.test.ts` (shape derivation, malformed polls), `paths.test.ts` (routing + fallback), `StatusBadge.test.tsx` (token classes, no dark-variant forks), `apiResponse.test.ts` (top-level envelope), `rideStats.test.ts` (period buckets), `DataStateView.test.tsx` (error/retry). FE suite: **29/29**.
 
 **Interview Q&A.** *Why hook-per-concern instead of a `useAuth` context?* RTK Query already caches identity; context would add a parallel state source to reconcile. Hooks compose; singletons freeze the architecture.
 
@@ -89,7 +89,7 @@ Each decision follows the same shape: problem → approach → alternatives → 
 
 **Problem.** Three competing brand hues (light `--primary` green-500, dark emerald-500, gradients emerald→teal), a `default2` button variant hardcoding `bg-emerald-500` as the *default* variant, `hsl(var(--chart-N))` wrapping oklch values (invalid CSS ×7), ~375 hardcoded color classes concentrated in marketing pages, `StatusBadge` with 0 dark variants on every table.
 
-**Approach.** One emerald `oklch(0.696 0.17 162.48)` for light+dark primary/ring/sidebar/charts; token chips for statuses (`/10` fill, `/25` border — contrast holds in both modes without `dark:` forks); a graded `--brand-*` ramp; `button.tsx` pruned; recorded script migrated 149 utility classes across hotspots onto tokens; loaders/polyline/chart colors go through `var(--primary)`/chart tokens. No layout changes.
+**Approach.** Emerald 700 in light mode (white text AA) and emerald 400 in dark mode (dark text), with ring/sidebar/chart tokens mode-specific; token chips for statuses (`/10` fill, `/25` border — contrast holds in both modes without `dark:` forks); a graded `--brand-*` ramp; `button.tsx` pruned; all remaining emerald/teal/green/cyan utility classes across marketing/sidebar hotspots migrated onto `brand-*` tokens; loaders/polyline/chart colors go through `var(--primary)`/chart tokens. No layout changes.
 
 **Alternatives.** Full redesign + new palette (rejected: violates "preserve visual identity"); leaving hex remapping per-touch (keeps drift).
 
@@ -117,7 +117,7 @@ Each decision follows the same shape: problem → approach → alternatives → 
 
 **Alternatives.** Calling real ORS in every test run (rejected: quota/network flakiness, CI failure); fake metrics/arrays (the "demo data everywhere" pattern — rejected); mocking MongoDB (rejected: transaction/race behavior is the point).
 
-**Tested.** The default suite is **46 passed, 1 skipped, 0 failed**; the skipped test is the live-ORS smoke. `ride-lifecycle.test.ts` asserts `fare = distance × 100` using the deterministic provider. Seed is verified for compilation and its first run is intentionally left to the owner (it writes to the real DB).
+**Tested.** The default suite is **49 passed, 1 skipped, 0 failed**; the skipped test is the live-ORS smoke. `ride-lifecycle.test.ts` asserts `fare = distance × 100` using the deterministic provider. Seed is verified for compilation and its first run is intentionally left to the owner (it writes to the real DB).
 
 ---
 
@@ -132,7 +132,7 @@ Each decision follows the same shape: problem → approach → alternatives → 
 ## 10. Scope honesty (what was said "no" to)
 
 - **AI feature skipped** after evaluation (no concrete user problem for an optional LLM dependency in a ride-flow product; decision recorded in the plan).
-- No payments module (fares settle off-platform; UI says so), no websockets (polling is correct for this scale), no vehicle categories or surge pricing, no address geocoding (map-only destinations). Each is listed as a *known limitation*, not hidden.
+- No payments module (fares settle off-platform; UI says so), no websockets (polling is correct for this scale), no vehicle categories or surge pricing, no address geocoding (destinations via map or keyboard-accessible coordinates). Each is listed as a *known limitation*, not hidden.
 
 ---
 
@@ -142,9 +142,9 @@ Each decision follows the same shape: problem → approach → alternatives → 
 |---|---|---|
 | backend | `npm run build` | ✅ |
 | backend | `npm run lint` | ✅ 0 errors, 2 intentional console warnings |
-| backend | `npm test` | ✅ 46/46 passed, 1 opt-in live-ORS test skipped (deterministic fare provider, replica set) |
+| backend | `npm test` | ✅ 49 passed, 1 opt-in live-ORS test skipped (deterministic fare provider, replica set) |
 | frontend | `npm run build` | ✅ (~8 s) |
 | frontend | `npm run lint` | ✅ 0 errors |
-| frontend | `npx vitest run` | ✅ 28/28 |
+| frontend | `npx vitest run` | ✅ 29/29 |
 
 Outstanding owner actions: rotate/delete the deployed seed admin and any potentially-leaked secrets; rename Vercel projects + update `FRONTEND_URL`/`VITE_API_URL_PROD` together; first `npm run seed` against a temporary/demo DB with `SEED_PASSWORD`/`SEED_ADMIN_PASSWORD`; browser pass of the rebranded screens for demo recording.

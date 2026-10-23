@@ -1,6 +1,23 @@
 ﻿import z from "zod";
-import { Role } from "./user.interface";
+import { AccountStatus, Role } from "./user.interface";
 import { nameSchema, passwordSchema } from "../../validation/common";
+
+const userListStatuses = [
+  AccountStatus.ACTIVE,
+  AccountStatus.BLOCKED,
+  AccountStatus.SUSPENDED,
+  "PENDING",
+] as const;
+
+export const adminUserQueryZodSchema = z.object({
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  searchTerm: z.string().trim().max(100).optional(),
+  dateSearch: z.string().trim().max(32).optional(),
+  role: z.enum(Object.values(Role) as [string, ...string[]]).optional(),
+  status: z.enum(userListStatuses).optional(),
+  sort: z.string().trim().max(100).optional(),
+});
 
 export const createUserZodSchema = z.object({
   body: z.object({

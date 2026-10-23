@@ -12,7 +12,6 @@ const driverSchema = new Schema<IDriver>(
     isApproved: { type: Boolean, default: false },
     isOnline: { type: Boolean, default: false },
     vehicleInfo: { type: String },
-    totalEarnings: { type: Number, default: 0 },
     activeRideId: {
       type: Schema.Types.ObjectId,
       ref: "Ride",
