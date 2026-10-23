@@ -995,8 +995,8 @@ These cannot be answered reliably from the source in this session:
 - Frontend `npm run build`: pass (966.71 kB main chunk warning; existing Zod comment warnings).
 - Frontend `npm run lint`: 0 errors, 2 upstream shadcn warnings.
 - Frontend `npx vitest run`: 29/29 pass.
-- CI is green on the feature branches and on `main`: backend `backend-ci` (runs 39824272386 and 39890181987) and frontend `frontend-ci` (runs 39886783568 and 39890182367, Node 24). The initial frontend Node 20 run failed because `jsdom` 30 / `undici` 8 require a newer Node; the workflow was moved to Node 24.
-- The feature branches were fast-forwarded to `main` and pushed. Production was deployed manually with the Vercel CLI: backend `https://ride-booking-system-kappa.vercel.app/` and frontend `https://ride-booking-frontend-drab.vercel.app/`; both deployments are Ready. Added production `ORS_API_KEY` and `VITE_API_URL_PROD`, and corrected backend `NODE_ENV` to `production`. Verified backend `/` 200, invalid login 401 with `err`/`stack` null, CORS allow-origin matching the frontend with credentials, frontend HTML 200, and the production API URL present in the built bundle. No seed run, browser E2E, or database migration was performed.
+- CI is green on `main` after the completion batch: backend `backend-ci` run 39900419651 (commit `8ba62fc`) and frontend `frontend-ci` run 39900713808 (commit `bc1931a`, Node 24). An earlier frontend test run failed because the SOS key test imported the app config and required `VITE_API_URL_DEV`; the helper is now a pure utility and CI is green.
+- `main` was pushed and production was redeployed manually with the Vercel CLI: backend deployment `8jssi0940` (stable `https://ride-booking-system-kappa.vercel.app/`) and frontend deployment `d1m6t9jzi` (stable `https://ride-booking-frontend-drab.vercel.app/`); both are Ready. Verified backend `/` 200, invalid login 401 with `err`/`stack` null, CORS allow-origin matching the frontend with credentials, frontend HTML 200, the production API URL present in the bundle, and no ORS key/URL in the bundle. No seed run, browser E2E, or database migration was performed.
 
 ### K.3 Remaining owner actions
 

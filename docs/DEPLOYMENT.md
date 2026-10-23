@@ -64,8 +64,9 @@ Status as of this phase. Verification is recorded; anything marked "owner action
 
 ## 6. Production deployment record (2026-10-23)
 
-- Backend: `https://ride-booking-system-kappa.vercel.app/` — deployment Ready, `GET /` returns 200, `NODE_ENV=production`, `ORS_API_KEY` present.
-- Frontend: `https://ride-booking-frontend-drab.vercel.app/` — deployment Ready, production bundle contains `https://ride-booking-system-kappa.vercel.app/api/v1`.
+- Backend: `https://ride-booking-system-kappa.vercel.app/` — deployment `8jssi0940` Ready, `GET /` returns 200, `NODE_ENV=production`, `ORS_API_KEY` present.
+- Frontend: `https://ride-booking-frontend-drab.vercel.app/` — deployment `d1m6t9jzi` Ready, production bundle contains `https://ride-booking-system-kappa.vercel.app/api/v1` and no ORS key/URL.
 - CORS preflight from the frontend origin returns `Access-Control-Allow-Origin: https://ride-booking-frontend-drab.vercel.app` and `Access-Control-Allow-Credentials: true`.
 - Invalid login returns 401 with `err`/`stack` null, confirming production error handling and Atlas connectivity.
-- Remaining owner checks: duplicate `Driver.user` / `Ride.idempotencyKey` queries, a real OTP send, seed-admin rotation, and secret rotation.
+- CI on `main`: backend run 39900419651 (success), frontend run 39900713808 (success).
+- Remaining owner checks: duplicate `Driver.user` / `Ride.idempotencyKey` queries, a real OTP send, seed-admin rotation, secret rotation, browser smoke, and dropping the old geo indexes.
